@@ -1,7 +1,7 @@
 
 import numpy as np 
-import spec_ops as spec_ops
-import phase_operation as phase_op
+import GANsynth_pytorch.spec_ops as spec_ops
+import GANsynth_pytorch.phase_operation as phase_op
 
 def _linear_to_mel_matrix():
     """Get the mel transformation matrix."""

@@ -89,25 +89,16 @@ def instantaneous_frequency(phase_angle, time_axis):
     dphase: Instantaneous frequency (derivative of phase). Same size as input.
     """
     phase_unwrapped = unwrap(phase_angle, axis=time_axis)
-#     print("phase_unwrapped",phase_unwrapped.shape)
     
     dphase = diff(phase_unwrapped, axis=time_axis)
-#     print("dphase",dphase.shape)
     
     # Add an initial phase to dphase
     size = np.array(phase_unwrapped.shape)
-#     size = phase_unwrapped.get_shape().as_list()
 
     size[time_axis] = 1
-#     print("size",size)
     begin = [0 for unused_s in size]
-#     phase_slice = tf.slice(phase_unwrapped, begin, size)
-#     print("begin",begin)
     phase_slice = phase_unwrapped[begin[0]:begin[0]+size[0], begin[1]:begin[1]+size[1]]
-#     print("phase_slice",phase_slice.shape)
     dphase = np.concatenate([phase_slice, dphase], axis=time_axis) / np.pi
-
-#     dphase = tf.concat([phase_slice, dphase], axis=time_axis) / np.pi
     return dphase
 
 
