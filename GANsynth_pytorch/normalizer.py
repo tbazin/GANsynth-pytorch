@@ -17,7 +17,7 @@ class DataNormalizer(object):
             self.dataloader = dataloader
 
             self._init_range_normalizer(magnitude_margin=0.8, IF_margin=1.0)
-        elif forall([x is not None for x in [s_a, s_b, p_a, p_b]]):
+        elif all([x is not None for x in [s_a, s_b, p_a, p_b]]):
             self.s_a = s_a
             self.s_b = s_b
             self.p_a = p_a
