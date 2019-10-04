@@ -4,6 +4,7 @@ import pickle
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 
 class DataNormalizer(object):
@@ -16,6 +17,7 @@ class DataNormalizer(object):
         if dataloader is not None:
             self.dataloader = dataloader
 
+            print("Computing normalization statistics over the whole dataset")
             self._init_range_normalizer(magnitude_margin=0.8, IF_margin=1.0)
         elif all([x is not None for x in [s_a, s_b, p_a, p_b]]):
             self.s_a = s_a
@@ -37,22 +39,27 @@ class DataNormalizer(object):
         min_IF = 10000
         max_IF = -10000
 
-        for batch_idx, ((img, pitch), target) in enumerate(self.dataloader): 
+        for batch_idx, (img, pitch) in enumerate(
+                tqdm(self.dataloader)):
             spec = img.select(1, 0)
             IF = img.select(1, 1)
-            
-            if spec.min() < min_spec: min_spec=spec.min()
-            if spec.max() > max_spec: max_spec=spec.max()
 
-            if IF.min() < min_IF: min_IF=IF.min()
-            if IF.max() > max_IF: max_IF=IF.max()
-    
+            if spec.min() < min_spec:
+                min_spec = spec.min()
+            if spec.max() > max_spec:
+                max_spec = spec.max()
+
+            if IF.min() < min_IF:
+                min_IF = IF.min()
+            if IF.max() > max_IF:
+                max_IF = IF.max()
+
         self.s_a = magnitude_margin * (2.0 / (max_spec - min_spec))
         self.s_b = magnitude_margin * (-2.0 * min_spec / (max_spec - min_spec) - 1.0)
-        
+
         # min_IF = -np.pi
         # max_IF = np.pi
-        
+
         self.p_a = IF_margin * (2.0 / (max_IF - min_IF))
         self.p_b = IF_margin * (-2.0 * min_IF / (max_IF - min_IF) - 1.0)
 
@@ -61,7 +68,7 @@ class DataNormalizer(object):
         b = np.asarray([self.s_b, self.p_b])[None, :, None, None]
         a = torch.FloatTensor(a).cuda()
         b = torch.FloatTensor(b).cuda()
-        
+
         feature_map = feature_map*a + b
 
         return feature_map
@@ -70,7 +77,7 @@ class DataNormalizer(object):
         spec = (spec - self.s_b) / self.s_a
         IF = (IF-self.p_b) / self.p_a
         return spec, IF
-    
+
     def dump_statistics(self, path: pathlib.Path):
         statistics = {
             attr: getattr(self, attr)
