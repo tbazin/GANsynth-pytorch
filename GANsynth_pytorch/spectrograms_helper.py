@@ -1,5 +1,6 @@
 
 import numpy as np 
+import librosa
 
 import GANsynth_pytorch.spec_ops as spec_ops
 import GANsynth_pytorch.phase_operation as phase_op
@@ -99,3 +100,24 @@ def specgrams_to_melspecgrams(magnitude, IF):
 
     return logmelmag2, mel_p
 
+
+def mag_and_IF_to_audio(mag, IF):
+    mag = np.exp(mag) - 1.0e-6
+    reconstruct_magnitude = np.abs(mag)
+    reconstruct_phase_angle = np.cumsum(IF * np.pi, axis=1)
+
+    stft = phase_op.polar2rect(reconstruct_magnitude,
+                               reconstruct_phase_angle)
+
+    audio = librosa.istft(stft, hop_length=512, win_length=2048,
+                          window='hann')
+
+    return audio
+
+
+def mel_mag_and_IF_to_audio(mel_mag, mel_IF):
+    mag, IF = melspecgrams_to_specgrams(mel_mag, mel_IF)
+    mag = np.vstack((mag, mag[1023]))
+    IF = np.vstack((IF, IF[1023]))
+    audio = mag_and_IF_to_audio(mag, IF)
+    return audio
