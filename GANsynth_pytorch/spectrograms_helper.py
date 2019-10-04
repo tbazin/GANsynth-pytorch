@@ -1,5 +1,5 @@
 
-import numpy as np 
+import numpy as np
 import librosa
 
 import GANsynth_pytorch.spec_ops as spec_ops
@@ -46,8 +46,8 @@ def melspecgrams_to_specgrams(logmelmag2, mel_p):
     logmelmag2 = np.array([logmelmag2])
     mel_p = np.array([mel_p])
     time_axis = 1
-  
-    mel2l = _mel_to_linear_matrix()  
+
+    mel2l = _mel_to_linear_matrix()
     mag2 = np.tensordot(np.exp(logmelmag2), mel2l, 1)
     logmag = 0.5 * np.log(mag2+1e-6)
     mel_phase_angle = np.cumsum(mel_p * np.pi, axis=time_axis)
