@@ -1,124 +1,134 @@
 import librosa
 import numpy as np
-from intervaltree import Interval,IntervalTree
+from intervaltree import Interval, IntervalTree
+import torch
 
 
-def diff(x, axis):
-    """Take the finite difference of a tensor along an axis.
-    Args:
-    x: Input tensor of any dimension.
-    axis: Axis on which to take the finite difference.
+def select(x: np.ndarray, axis: int, index: int, keepdims: bool = True
+           ) -> np.ndarray:
+    """Indexing over arbitrary dimension
+
+    Equivalent to torch.Tensor().select
+
+    Arguments:
+        x (np.ndarray)
+        axis (int):
+            The dimension over which to index
+        index (int)
+        keepdims (bool):
+            if False, the indexed dimension is removed in the return value
     Returns:
-    d: Tensor with size less than x by 1 along the difference dimension.
-    Raises:
-    ValueError: Axis out of range for tensor.
+        np.ndarray:
+            The selected sub-array
     """
-    shape = x.shape
+    x_permuted = np.swapaxes(x, 0, axis)
+    selected_permuted = x_permuted[0]
+    if keepdims:
+        selected = np.swapaxes(np.expand_dims(selected_permuted,
+                                              axis=0),
+                               0, axis)
+    else:
+        selected = np.swapaxes(selected_permuted, 0, axis-1)
 
-    begin_back = [0 for unused_s in range(len(shape))]
-#     print("begin_back",begin_back)
-    begin_front = [0 for unused_s in range(len(shape))]
+    return selected
 
-    begin_front[axis] = 1
-#     print("begin_front",begin_front)
 
-    size = list(shape)
-    size[axis] -= 1
-#     print("size",size)
-    slice_front = x[begin_front[0]:begin_front[0]+size[0], begin_front[1]:begin_front[1]+size[1]]
-    slice_back = x[begin_back[0]:begin_back[0]+size[0], begin_back[1]:begin_back[1]+size[1]]
+def diff(x: np.ndarray, axis: int) -> np.ndarray:
+    """Take the finite difference of a tensor along an axis.
+    Arguments:
+        x (np.ndarray):
+            Input tensor of any dimension.
+        axis (int):
+            Axis on which to take the finite difference.
+    Returns:
+        d (np.ndarray):
+            Tensor with size less than x by 1 along the difference dimension.
+    Raises:
+        ValueError: Axis out of range for tensor.
+    """
+    # bring dimension for finite difference to first dimension
+    x_permuted = np.swapaxes(x, 0, axis)
 
-#     slice_front = tf.slice(x, begin_front, size)
-#     slice_back = tf.slice(x, begin_back, size)
-#     print("slice_front",slice_front)
-#     print(slice_front.shape)
-#     print("slice_back",slice_back)
+    # compute finite difference over the first dimension
+    d_permuted = x_permuted[1:] - x_permuted[:-1]
 
-    d = slice_front - slice_back
+    # transpose the dimensions back
+    d = np.swapaxes(d_permuted, 0, axis)
     return d
 
 
-def unwrap(p, discont=np.pi, axis=-1):
+def unwrap(p: np.ndarray, discont: float = np.pi, axis: int = -1
+           ) -> np.ndarray:
     """Unwrap a cyclical phase tensor.
-    Args:
-    p: Phase tensor.
-    discont: Float, size of the cyclic discontinuity.
-    axis: Axis of which to unwrap.
+
+    Arguments:
+        p (np.ndarray):
+            Phase tensor.
+        discont (float):
+            size of the cyclic discontinuity.
+        axis (int):
+            Axis over which to unwrap.
     Returns:
-    unwrapped: Unwrapped tensor of same size as input.
+        unwrapped (np.ndarray):
+            Unwrapped tensor of same size as input.
     """
     dd = diff(p, axis=axis)
-#     print("dd",dd)
-    ddmod = np.mod(dd+np.pi,2.0*np.pi)-np.pi  # ddmod = tf.mod(dd + np.pi, 2.0 * np.pi) - np.pi
-#     print("ddmod",ddmod)
+    ddmod = np.mod(dd + np.pi, 2.0*np.pi) - np.pi
 
-    idx = np.logical_and(np.equal(ddmod, -np.pi),np.greater(dd,0)) # idx = tf.logical_and(tf.equal(ddmod, -np.pi), tf.greater(dd, 0))
-#     print("idx",idx)
-    ddmod = np.where(idx, np.ones_like(ddmod) *np.pi, ddmod) # ddmod = tf.where(idx, tf.ones_like(ddmod) * np.pi, ddmod)
-#     print("ddmod",ddmod)
+    idx = np.logical_and(np.equal(ddmod, -np.pi), np.greater(dd, 0))
+    ddmod = np.where(idx, np.ones_like(ddmod) * np.pi, ddmod)
     ph_correct = ddmod - dd
-#     print("ph_corrct",ph_correct)
-    
-    idx = np.less(np.abs(dd), discont) # idx = tf.less(tf.abs(dd), discont)
-    
-    ddmod = np.where(idx, np.zeros_like(ddmod), dd) # ddmod = tf.where(idx, tf.zeros_like(ddmod), dd)
-    ph_cumsum = np.cumsum(ph_correct, axis=axis) # ph_cumsum = tf.cumsum(ph_correct, axis=axis)
-#     print("idx",idx)
-#     print("ddmod",ddmod)
-#     print("ph_cumsum",ph_cumsum)
-    
-    
-    shape = np.array(p.shape) # shape = p.get_shape().as_list()
 
+    idx = np.less(np.abs(dd), discont)
+    ddmod = np.where(idx, np.zeros_like(ddmod), dd)
+    ph_cumsum = np.cumsum(ph_correct, axis=axis)
+
+    shape = np.array(p.shape)
     shape[axis] = 1
-    ph_cumsum = np.concatenate([np.zeros(shape, dtype=p.dtype), ph_cumsum], axis=axis) 
-    #ph_cumsum = tf.concat([tf.zeros(shape, dtype=p.dtype), ph_cumsum], axis=axis)
+    ph_cumsum = np.concatenate([np.zeros(shape, dtype=p.dtype), ph_cumsum],
+                               axis=axis)
     unwrapped = p + ph_cumsum
-#     print("unwrapped",unwrapped)
     return unwrapped
 
 
-def instantaneous_frequency(phase_angle, time_axis):
+def instantaneous_frequency(phase_angle: np.ndarray, time_axis: int
+                            ) -> np.ndarray:
     """Transform a fft tensor from phase angle to instantaneous frequency.
-    Unwrap and take the finite difference of the phase. Pad with initial phase to
-    keep the tensor the same size.
-    Args:
-    phase_angle: Tensor of angles in radians. [Batch, Time, Freqs]
-    time_axis: Axis over which to unwrap and take finite difference.
+
+    Unwrap and take the finite difference of the phase.
+    Pad with initial phase to keep the tensor the same size.
+
+    Arguments:
+        phase_angle:
+            Tensor of angles in radians. [Batch, Time, Freqs]
+        time_axis:
+            Axis over which to unwrap and take finite difference.
     Returns:
-    dphase: Instantaneous frequency (derivative of phase). Same size as input.
+        dphase:
+            Instantaneous frequency (derivative of phase). Same size as input.
     """
     phase_unwrapped = unwrap(phase_angle, axis=time_axis)
-    
-    dphase = diff(phase_unwrapped, axis=time_axis)
-    
-    # Add an initial phase to dphase
-    size = np.array(phase_unwrapped.shape)
 
-    size[time_axis] = 1
-    begin = [0 for unused_s in size]
-    phase_slice = phase_unwrapped[begin[0]:begin[0]+size[0], begin[1]:begin[1]+size[1]]
-    dphase = np.concatenate([phase_slice, dphase], axis=time_axis) / np.pi
+    dphase = diff(phase_unwrapped, axis=time_axis)
+
+    # Add an initial phase to dphase by duplicating the first phase
+    initial_phase = select(phase_unwrapped, time_axis, 0)
+    dphase = np.concatenate([initial_phase, dphase], axis=time_axis)
+
+    # rescale to [-1, 1]
+    dphase = dphase / np.pi
     return dphase
 
 
-def polar2rect(mag, phase_angle):
+def polar2rect(mag: np.array, phase_angle: np.array) -> np.array:
     """Convert polar-form complex number to its rectangular form."""
-#     mag = np.complex(mag)
-    temp_mag = np.zeros(mag.shape,dtype=np.complex_)
-    temp_phase = np.zeros(mag.shape,dtype=np.complex_)
+    temp_phase = np.zeros(mag.shape, dtype=np.complex_)
 
-    for i, time in enumerate(mag):
-        for j, time_id in enumerate(time):
-#             print(mag[i,j])
-            temp_mag[i,j] = np.complex(mag[i,j])
-#             print(temp_mag[i,j])
-    
+    mag_complex = mag.astype(np.complex_)
+
     for i, time in enumerate(phase_angle):
-        for j, time_id in enumerate(time):
-            temp_phase[i,j] = np.complex(np.cos(phase_angle[i,j]), np.sin(phase_angle[i,j]))
-#             print(temp_mag[i,j])
-    
-#     phase = np.complex(np.cos(phase_angle), np.sin(phase_angle))
-   
-    return temp_mag * temp_phase
+        for j, _ in enumerate(time):
+            temp_phase[i, j] = np.complex(np.cos(phase_angle[i, j]),
+                                          np.sin(phase_angle[i, j]))
+
+    return mag_complex * temp_phase
