@@ -10,12 +10,16 @@ and target_transform callbacks as ususal.
 import os
 import json
 import glob
+from tqdm import tqdm
 import numpy as np
 import scipy.io.wavfile
 import torch
 import torch.utils.data as data
 import torchvision.transforms as transforms
 from sklearn.preprocessing import LabelEncoder
+import numpy as np
+
+from typing import Tuple, Optional
 
 
 class NSynth(data.Dataset):
@@ -39,7 +43,9 @@ class NSynth(data.Dataset):
 
     def __init__(self, root, transform=None, target_transform=None,
                  blacklist_pattern=[],
-                 categorical_field_list=["instrument_family"]):
+                 categorical_field_list=["instrument_family"],
+                 valid_pitch_range: Optional[Tuple[int, int]]=None,
+                 convert_to_float: bool = True):
         """Constructor"""
         assert(isinstance(root, str))
         assert(isinstance(blacklist_pattern, list))
@@ -48,16 +54,30 @@ class NSynth(data.Dataset):
         self.filenames = glob.glob(os.path.join(root, "audio/*.wav"))
         with open(os.path.join(root, "examples.json"), "r") as f:
             self.json_data = json.load(f)
+        self.valid_pitch_range = valid_pitch_range
+        if self.valid_pitch_range is not None:
+            print("Filter out invalid pitches")
+            self.filenames, self.json_data = self._filter_pitches_()
         for pattern in blacklist_pattern:
             self.filenames, self.json_data = self.blacklist(
                 self.filenames, self.json_data, pattern)
+
         self.categorical_field_list = categorical_field_list
         self.le = []
         for i, field in enumerate(self.categorical_field_list):
             self.le.append(LabelEncoder())
             field_values = [value[field] for value in self.json_data.values()]
             self.le[i].fit(field_values)
+
         self.transform = transform
+        self.convert_to_float = convert_to_float
+        if self.convert_to_float:
+            # audio samples are loaded as an int16 numpy array
+            # rescale intensity range as float [-1, 1]
+            toFloat = transforms.Lambda(lambda x: (
+                x / np.iinfo(np.int16).max).astype(np.float32))
+            self.transform = transforms.Compose([toFloat,
+                                                 self.transform])
         self.target_transform = target_transform
 
     def blacklist(self, filenames, json_data, pattern):
@@ -67,6 +87,19 @@ class NSynth(data.Dataset):
             key: value for key, value in json_data.items()
             if pattern not in key
         }
+        return filenames, json_data
+
+    def _filter_pitches_(self):
+        valid_pitches_filenames = []
+        json_data = {}
+        for sample_name, sample_details in tqdm(self.json_data.items()):
+            pitch = sample_details['pitch']
+            if (self.valid_pitch_range[0] <= pitch
+                    and pitch <= self.valid_pitch_range[1]):
+                filename = os.path.join(self.root, f"audio/{sample_name}.wav")
+                valid_pitches_filenames.append(filename)
+                json_data[sample_name] = sample_details
+        filenames = list(set(valid_pitches_filenames) & set(self.filenames))
         return filenames, json_data
 
     def __len__(self):
