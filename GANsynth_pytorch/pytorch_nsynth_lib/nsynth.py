@@ -17,7 +17,11 @@ import torch
 import torch.utils.data as data
 import torchvision.transforms as transforms
 from sklearn.preprocessing import LabelEncoder
+import librosa
+from .. import phase_operation
+from .. import spectrograms_helper as spec_helper
 import numpy as np
+import functools
 
 from typing import Tuple, Optional
 
@@ -123,6 +127,69 @@ class NSynth(data.Dataset):
         if self.target_transform is not None:
             target = self.target_transform(target)
         return [sample, *categorical_target, target]
+
+
+def expand(mat):
+    """"Repeat the last column of the input matrix twice"""
+    expand_vec = np.expand_dims(mat[:, 125], axis=1)
+    expanded = np.hstack((mat, expand_vec, expand_vec))
+    return expanded
+
+
+def get_spectrogram_and_IF(sample, n_fft: int = 2048, hop_length: int = 512):
+    sample = sample.squeeze()
+    spec_float64 = librosa.stft(sample, n_fft=n_fft, hop_length=hop_length)
+
+    magnitude_float64 = np.log(np.abs(spec_float64) + 1.0e-6)[:1024]
+    angle_float64 = np.angle(spec_float64)
+
+    # magnitude = magnitude_float64.astype(np.float32)
+    # angle = angle_float64.astype(np.float32)
+
+    IF_float64 = phase_operation.instantaneous_frequency(
+        angle_float64, time_axis=1)[:1024]
+
+    magnitude = expand(magnitude_float64)
+    IF = expand(IF_float64)
+    return magnitude, IF
+
+
+def get_mel_spectrogram_and_IF(sample, n_fft: int = 2048,
+                               hop_length: int = 512):
+    magnitude_float64, IF_float64 = get_spectrogram_and_IF(
+        sample, n_fft=n_fft, hop_length=hop_length)
+    logmelmag2_float64, mel_p_float64 = spec_helper.specgrams_to_melspecgrams(
+        magnitude_float64, IF_float64)
+    return logmelmag2_float64, mel_p_float64
+
+
+def channels_to_image(channels_np: List[np.ndarray]):
+    """Reshape data into nn.Conv2D-compatible image shape"""
+    channel_dimension = 0
+    channels = []
+    for data_array in channels_np:
+        data_tensor = torch.as_tensor(data_array, dtype=torch.float32)
+        data_tensor_as_image_channel = data_tensor.unsqueeze(
+            channel_dimension)
+        channels.append(data_tensor_as_image_channel)
+
+    return torch.cat(channels, channel_dimension)
+
+
+def to_mel_spec_and_IF_image(sample, n_fft: int = 2048, hop_length: int = 512):
+    """Transforms wav samples to image-like mel-spectrograms [magnitude, IF]"""
+    mel_spec, mel_IF = get_mel_spectrogram_and_IF(
+        sample, hop_length=hop_length, n_fft=n_fft)
+    mel_spec_and_IF_as_image_tensor = channels_to_image(
+        [a.astype(np.float32) for a in [mel_spec, mel_IF]])
+    return mel_spec_and_IF_as_image_tensor
+
+
+def make_to_mel_spec_and_IF_image_transform(n_fft: int = 2048,
+                                            hop_length: int = 512):
+    my_transform = functools.partials(to_mel_spec_and_IF_image,
+                                      n_fft=n_fft, hop_length=hop_length)
+    return transforms.Lambda(my_transform)
 
 
 if __name__ == "__main__":
