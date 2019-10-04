@@ -23,7 +23,7 @@ from .. import spectrograms_helper as spec_helper
 import numpy as np
 import functools
 
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List
 
 
 class NSynth(data.Dataset):
