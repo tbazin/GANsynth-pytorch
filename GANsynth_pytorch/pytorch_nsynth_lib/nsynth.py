@@ -187,7 +187,7 @@ def to_mel_spec_and_IF_image(sample, n_fft: int = 2048, hop_length: int = 512):
 
 def make_to_mel_spec_and_IF_image_transform(n_fft: int = 2048,
                                             hop_length: int = 512):
-    my_transform = functools.partials(to_mel_spec_and_IF_image,
+    my_transform = functools.partial(to_mel_spec_and_IF_image,
                                       n_fft=n_fft, hop_length=hop_length)
     return transforms.Lambda(my_transform)
 
