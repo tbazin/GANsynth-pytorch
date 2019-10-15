@@ -204,6 +204,54 @@ def make_to_mel_spec_and_IF_image_transform(n_fft: int = 2048,
     return transforms.Lambda(to_image_transform)
 
 
+class WavToSpectrogramDataLoader(torch.utils.data.DataLoader):
+    def __init__(self, dataset, batch_size=1, shuffle=False, sampler=None,
+                 batch_sampler=None, num_workers=0, collate_fn=None,
+                 pin_memory=False, drop_last=False, timeout=0,
+                 worker_init_fn=None, multiprocessing_context=None,
+                 n_fft: int = 2048, hop_length: int = 512,
+                 device: str = 'cpu'
+                 ):
+        super().__init__(dataset, batch_size=batch_size,
+                         shuffle=shuffle, sampler=sampler,
+                         batch_sampler=batch_sampler,
+                         num_workers=num_workers, collate_fn=collate_fn,
+                         pin_memory=pin_memory, drop_last=drop_last,
+                         timeout=timeout,
+                         worker_init_fn=worker_init_fn,
+                         multiprocessing_context=multiprocessing_context)
+        self.n_fft = n_fft
+        self.hop_length = hop_length
+        self.device = device
+
+    @property
+    def to_mel_spec_and_IF_image_transform(self) -> transforms.Compose:
+        """Return a Transform to use for efficient data generation"""
+        my_transforms = []
+
+        if self.device is not None:
+            def to_device_collated(wav_and_targets):
+                wav = wav_and_targets[0].to(self.device)
+                targets = wav_and_targets[1:]
+                return [wav] + targets
+            my_transforms.append(to_device_collated)
+
+        to_image = functools.partial(to_mel_spec_and_IF_image,
+                                     n_fft=self.n_fft,
+                                     hop_length=self.hop_length)
+
+        def to_image_collated(wav_and_targets):
+            spec = to_image(wav_and_targets[0])
+            targets = wav_and_targets[1:]
+            return [spec] + targets
+        my_transforms.append(to_image_collated)
+
+        return transforms.Compose(my_transforms)
+
+    def __iter__(self):
+        wavforms_iterator = super().__iter__()
+        return map(self.to_mel_spec_and_IF_image_transform,
+                   wavforms_iterator)
 
 
 if __name__ == "__main__":
