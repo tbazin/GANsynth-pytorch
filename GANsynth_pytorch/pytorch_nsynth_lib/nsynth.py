@@ -14,6 +14,7 @@ from tqdm import tqdm
 import numpy as np
 import scipy.io.wavfile
 import torch
+import torchaudio
 import torch.utils.data as data
 import torchvision.transforms as transforms
 from sklearn.preprocessing import LabelEncoder
@@ -49,7 +50,8 @@ class NSynth(data.Dataset):
                  blacklist_pattern=[],
                  categorical_field_list=["instrument_family"],
                  valid_pitch_range: Optional[Tuple[int, int]]=None,
-                 convert_to_float: bool = True):
+                 convert_to_float: bool = True,
+                 squeeze_mono_channel: bool = True):
         """Constructor"""
         assert(isinstance(root, str))
         assert(isinstance(blacklist_pattern, list))
@@ -73,13 +75,14 @@ class NSynth(data.Dataset):
             field_values = [value[field] for value in self.json_data.values()]
             self.le[i].fit(field_values)
 
-        self.transform = transform
+        self.squeeze_mono_channel = squeeze_mono_channel
+        self.transform = transform or transforms.Lambda(lambda x: x)
         self.convert_to_float = convert_to_float
         if self.convert_to_float:
             # audio samples are loaded as an int16 numpy array
             # rescale intensity range as float [-1, 1]
             toFloat = transforms.Lambda(lambda x: (
-                x / np.iinfo(np.int16).max).astype(np.float32))
+                x / np.iinfo(np.int16).max))
             self.transform = transforms.Compose([toFloat,
                                                  self.transform])
         self.target_transform = target_transform
@@ -117,7 +120,9 @@ class NSynth(data.Dataset):
             tuple: (audio sample, *categorical targets, json_data)
         """
         name = self.filenames[index]
-        _, sample = scipy.io.wavfile.read(name)
+        sample, sample_rate = torchaudio.load_wav(name, channels_first=True)
+        if self.squeeze_mono_channel:
+            sample = sample.squeeze(0)
         target = self.json_data[os.path.splitext(os.path.basename(name))[0]]
         categorical_target = [
             le.transform([target[field]])[0]
@@ -126,70 +131,79 @@ class NSynth(data.Dataset):
             sample = self.transform(sample)
         if self.target_transform is not None:
             target = self.target_transform(target)
+        if sample.ndim == 4:
+            sample = sample.squeeze(0)
         return [sample, *categorical_target, target]
 
 
-def expand(mat):
+def expand(t: torch.Tensor) -> torch.Tensor:
     """"Repeat the last column of the input matrix twice"""
-    expand_vec = np.expand_dims(mat[:, 125], axis=1)
-    expanded = np.hstack((mat, expand_vec, expand_vec))
+    # FIXME uses a hardcoded value valid only
+    # for the duration of the NSynth samples
+    expand_vec = t.select(dim=2, index=125).unsqueeze(2)
+    expanded = torch.cat([t, expand_vec, expand_vec], dim=2)
     return expanded
 
 
-def get_spectrogram_and_IF(sample, n_fft: int = 2048, hop_length: int = 512):
-    sample = sample.squeeze()
-    spec_float64 = librosa.stft(sample, n_fft=n_fft, hop_length=hop_length)
+def get_spectrogram_and_IF(sample: torch.Tensor, n_fft: int = 2048,
+                           hop_length: int = 512
+                           ) -> Tuple[torch.Tensor, torch.Tensor]:
+    if sample.ndim == 1:
+        sample = sample.unsqueeze(0)
+    window_np = scipy.signal.get_window('hann', n_fft)
+    window = torch.as_tensor(window_np).to(sample.device).to(sample.dtype)
+    spec = torch.stft(sample, n_fft=n_fft, hop_length=hop_length,
+                      window=window)
 
-    magnitude_float64 = np.log(np.abs(spec_float64) + 1.0e-6)[:1024]
-    angle_float64 = np.angle(spec_float64)
+    # trim-off Nyquist frequency as advocated by GANSynth
+    spec = spec[:, :-1]
 
-    # magnitude = magnitude_float64.astype(np.float32)
-    # angle = angle_float64.astype(np.float32)
+    magnitude, angle = torchaudio.functional.magphase(spec)
 
-    IF_float64 = phase_operation.instantaneous_frequency(
-        angle_float64, time_axis=1)[:1024]
+    logmagnitude = torch.log(magnitude + 1.0e-6)
 
-    magnitude = expand(magnitude_float64)
-    IF = expand(IF_float64)
-    return magnitude, IF
+    IF = phase_operation.instantaneous_frequency(
+        angle, time_axis=2)
+
+    logmagnitude = expand(logmagnitude)
+    IF = expand(IF)
+    return logmagnitude, IF
 
 
-def get_mel_spectrogram_and_IF(sample, n_fft: int = 2048,
-                               hop_length: int = 512):
+def get_mel_spectrogram_and_IF(sample: torch.Tensor, n_fft: int = 2048,
+                               hop_length: int = 512) -> torch.Tensor:
     magnitude_float64, IF_float64 = get_spectrogram_and_IF(
         sample, n_fft=n_fft, hop_length=hop_length)
+
     logmelmag2_float64, mel_p_float64 = spec_helper.specgrams_to_melspecgrams(
         magnitude_float64, IF_float64)
     return logmelmag2_float64, mel_p_float64
 
 
-def channels_to_image(channels_np: List[np.ndarray]):
+def channels_to_image(channels: List[torch.Tensor]):
     """Reshape data into nn.Conv2D-compatible image shape"""
-    channel_dimension = 0
-    channels = []
-    for data_array in channels_np:
-        data_tensor = torch.as_tensor(data_array, dtype=torch.float32)
-        data_tensor_as_image_channel = data_tensor.unsqueeze(
-            channel_dimension)
-        channels.append(data_tensor_as_image_channel)
-
-    return torch.cat(channels, channel_dimension)
+    channel_dimension = 1
+    return torch.cat([channel.float().unsqueeze(channel_dimension)
+                      for channel in channels],
+                     dim=channel_dimension)
 
 
-def to_mel_spec_and_IF_image(sample, n_fft: int = 2048, hop_length: int = 512):
+def to_mel_spec_and_IF_image(sample: torch.Tensor, n_fft: int = 2048,
+                             hop_length: int = 512) -> torch.Tensor:
     """Transforms wav samples to image-like mel-spectrograms [magnitude, IF]"""
-    mel_spec, mel_IF = get_mel_spectrogram_and_IF(
+    mel_spec_and_IF = get_mel_spectrogram_and_IF(
         sample, hop_length=hop_length, n_fft=n_fft)
-    mel_spec_and_IF_as_image_tensor = channels_to_image(
-        [a.astype(np.float32) for a in [mel_spec, mel_IF]])
+    mel_spec_and_IF_as_image_tensor = channels_to_image(mel_spec_and_IF)
     return mel_spec_and_IF_as_image_tensor
 
 
 def make_to_mel_spec_and_IF_image_transform(n_fft: int = 2048,
                                             hop_length: int = 512):
-    my_transform = functools.partial(to_mel_spec_and_IF_image,
-                                      n_fft=n_fft, hop_length=hop_length)
-    return transforms.Lambda(my_transform)
+    to_image_transform = functools.partial(to_mel_spec_and_IF_image,
+                                           n_fft=n_fft, hop_length=hop_length)
+    return transforms.Lambda(to_image_transform)
+
+
 
 
 if __name__ == "__main__":
