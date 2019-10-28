@@ -12,7 +12,8 @@ import json
 import glob
 from tqdm import tqdm
 import numpy as np
-import scipy.io.wavfile
+import scipy.signal
+
 import torch
 import torchaudio
 import torch.utils.data as data
