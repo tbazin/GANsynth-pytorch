@@ -8,6 +8,7 @@ If you want to modify the output of the dataset, use the transform
 and target_transform callbacks as ususal.
 """
 import os
+import pathlib
 import json
 import glob
 from tqdm import tqdm
@@ -253,6 +254,24 @@ class WavToSpectrogramDataLoader(torch.utils.data.DataLoader):
         wavforms_iterator = super().__iter__()
         return map(self.to_mel_spec_and_IF_image_transform,
                    wavforms_iterator)
+
+
+def wavfile_to_melspec_and_IF(audio_path: pathlib.Path
+                              ) -> torch.Tensor:
+    """Load and convert a single audio file"""
+    sample_audio, fs_hz = torchaudio.load_wav(audio_path,
+                                              channels_first=True)
+    toFloat = transforms.Lambda(lambda x: (x / np.iinfo(np.int16).max))
+    sample_audio = toFloat(sample_audio)
+    mel_spec, mel_IF = get_mel_spectrogram_and_IF(
+        sample_audio)
+    channel_dim = 1
+    mel_spec = mel_spec.unsqueeze(channel_dim)
+    mel_IF = mel_IF.unsqueeze(channel_dim)
+    mel_spec_and_IF = torch.cat([mel_spec,
+                                 mel_IF],
+                                dim=channel_dim)
+    return mel_spec_and_IF
 
 
 if __name__ == "__main__":
