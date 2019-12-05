@@ -51,7 +51,7 @@ class NSynth(data.Dataset):
     def __init__(self, root, transform=None, target_transform=None,
                  blacklist_pattern=[],
                  categorical_field_list=["instrument_family"],
-                 valid_pitch_range: Optional[Tuple[int, int]]=None,
+                 valid_pitch_range: Optional[Tuple[int, int]] = None,
                  convert_to_float: bool = True,
                  squeeze_mono_channel: bool = True):
         """Constructor"""
@@ -71,11 +71,11 @@ class NSynth(data.Dataset):
                 self.filenames, self.json_data, pattern)
 
         self.categorical_field_list = categorical_field_list
-        self.le = []
-        for i, field in enumerate(self.categorical_field_list):
-            self.le.append(LabelEncoder())
+        self.label_encoders = {}
+        for field in self.categorical_field_list:
+            self.label_encoders[field] = LabelEncoder()
             field_values = [value[field] for value in self.json_data.values()]
-            self.le[i].fit(field_values)
+            self.label_encoders[field].fit(field_values)
 
         self.squeeze_mono_channel = squeeze_mono_channel
         self.transform = transform or transforms.Lambda(lambda x: x)
@@ -127,8 +127,8 @@ class NSynth(data.Dataset):
             sample = sample.squeeze(0)
         target = self.json_data[os.path.splitext(os.path.basename(name))[0]]
         categorical_target = [
-            le.transform([target[field]])[0]
-            for field, le in zip(self.categorical_field_list, self.le)]
+            self.label_encoders[field].transform([target[field]])[0]
+            for field in self.categorical_field_list]
         if self.transform is not None:
             sample = self.transform(sample)
         if self.target_transform is not None:
