@@ -58,9 +58,9 @@ class NSynth(data.Dataset):
         assert(isinstance(root, str))
         assert(isinstance(blacklist_pattern, list))
         assert(isinstance(categorical_field_list, list))
-        self.root = root
-        self.filenames = glob.glob(os.path.join(root, "audio/*.wav"))
-        with open(os.path.join(root, "examples.json"), "r") as f:
+        self.root = os.path.expanduser(root)
+        self.filenames = glob.glob(os.path.join(self.root, "audio/*.wav"))
+        with open(os.path.join(self.root, "examples.json"), "r") as f:
             self.json_data = json.load(f)
         self.valid_pitch_range = valid_pitch_range
         if self.valid_pitch_range is not None:
