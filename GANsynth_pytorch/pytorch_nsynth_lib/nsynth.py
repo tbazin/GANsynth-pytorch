@@ -59,7 +59,8 @@ class NSynth(data.Dataset):
         assert(isinstance(blacklist_pattern, list))
         assert(isinstance(categorical_field_list, list))
         self.root = os.path.expanduser(root)
-        self.filenames = glob.glob(os.path.join(self.root, "audio/*.wav"))
+        self.filenames = sorted(
+            glob.glob(os.path.join(self.root, "audio/*.wav")))
         with open(os.path.join(self.root, "examples.json"), "r") as f:
             self.json_data = json.load(f)
         self.valid_pitch_range = valid_pitch_range
@@ -108,7 +109,8 @@ class NSynth(data.Dataset):
                 filename = os.path.join(self.root, f"audio/{sample_name}.wav")
                 valid_pitches_filenames.append(filename)
                 json_data[sample_name] = sample_details
-        filenames = list(set(valid_pitches_filenames) & set(self.filenames))
+        filenames = sorted(
+            list(set(valid_pitches_filenames) & set(self.filenames)))
         return filenames, json_data
 
     def __len__(self):
