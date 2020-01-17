@@ -26,7 +26,7 @@ from .. import spectrograms_helper as spec_helper
 import numpy as np
 import functools
 
-from typing import Tuple, Optional, List
+from typing import Tuple, Optional, List, Union, Iterable
 
 
 class NSynth(data.Dataset):
@@ -48,25 +48,40 @@ class NSynth(data.Dataset):
             LabelEncoder.
     """
 
-    def __init__(self, root, transform=None, target_transform=None,
+    def __init__(self, audio_directory_paths: Union[Iterable[str], str],
+                 json_data_path: str,
+                 transform=None, target_transform=None,
                  blacklist_pattern=[],
                  categorical_field_list=["instrument_family"],
                  valid_pitch_range: Optional[Tuple[int, int]] = None,
                  convert_to_float: bool = True,
                  squeeze_mono_channel: bool = True):
         """Constructor"""
-        assert(isinstance(root, str))
         assert(isinstance(blacklist_pattern, list))
         assert(isinstance(categorical_field_list, list))
-        self.root = os.path.expanduser(root)
-        self.filenames = sorted(
-            glob.glob(os.path.join(self.root, "audio/*.wav")))
-        with open(os.path.join(self.root, "examples.json"), "r") as f:
+
+        self.filenames = []
+        # ensure audio_directory_paths is an iterable
+        try:
+            _ = audio_directory_paths[0]
+        except TypeError:
+            audio_directory_paths = [audio_directory_paths]
+        for audio_directory_path in audio_directory_paths:
+            self.filenames.extend(sorted(
+                glob.glob(os.path.join(audio_directory_path, "*.wav"))
+            ))
+        with open(json_data_path, "r") as f:
             self.json_data = json.load(f)
+
+        # only keep filenames corresponding to files present in the split-describing metadata file
+        self._filter_filenames_in_json_data()
+
+        # filter-out invalid pitches
         self.valid_pitch_range = valid_pitch_range
         if self.valid_pitch_range is not None:
             print("Filter out invalid pitches")
             self.filenames, self.json_data = self._filter_pitches_()
+
         for pattern in blacklist_pattern:
             self.filenames, self.json_data = self.blacklist(
                 self.filenames, self.json_data, pattern)
@@ -99,19 +114,27 @@ class NSynth(data.Dataset):
         }
         return filenames, json_data
 
+    def _filter_filenames_in_json_data(self):
+        """Removes filenames of files not present in the json_data"""
+        valid_filenames = set(self.json_data.keys())
+        self.filenames = [filename for filename in self.filenames
+                          if pathlib.Path(filename).stem in valid_filenames
+                          ]
+
+    def _get_metadata(self, filename: str) -> int:
+        note_str = pathlib.Path(filename).stem
+        return self.json_data[note_str]
+
     def _filter_pitches_(self):
         valid_pitches_filenames = []
-        json_data = {}
-        for sample_name, sample_details in tqdm(self.json_data.items()):
-            pitch = sample_details['pitch']
-            if (self.valid_pitch_range[0] <= pitch
-                    and pitch <= self.valid_pitch_range[1]):
-                filename = os.path.join(self.root, f"audio/{sample_name}.wav")
+        valid_pitches_json_data = {}
+        for filename in self.filenames:
+            metadata = self._get_metadata(filename)
+            pitch = metadata['pitch']
+            if (self.valid_pitch_range[0] <= pitch <= self.valid_pitch_range[1]):
                 valid_pitches_filenames.append(filename)
-                json_data[sample_name] = sample_details
-        filenames = sorted(
-            list(set(valid_pitches_filenames) & set(self.filenames)))
-        return filenames, json_data
+                valid_pitches_json_data[metadata['note_str']] = metadata
+        return valid_pitches_filenames, valid_pitches_json_data
 
     def __len__(self):
         return len(self.filenames)
@@ -127,17 +150,17 @@ class NSynth(data.Dataset):
         sample, sample_rate = torchaudio.load_wav(name, channels_first=True)
         if self.squeeze_mono_channel:
             sample = sample.squeeze(0)
-        target = self.json_data[os.path.splitext(os.path.basename(name))[0]]
+        metadata = self._get_metadata(name)
         categorical_target = [
-            self.label_encoders[field].transform([target[field]])[0]
+            self.label_encoders[field].transform([metadata[field]])[0]
             for field in self.categorical_field_list]
         if self.transform is not None:
             sample = self.transform(sample)
         if self.target_transform is not None:
-            target = self.target_transform(target)
+            metadata = self.target_transform(metadata)
         if sample.ndim == 4:
             sample = sample.squeeze(0)
-        return [sample, *categorical_target, target]
+        return [sample, *categorical_target, metadata]
 
 
 def expand(t: torch.Tensor) -> torch.Tensor:
