@@ -1,4 +1,5 @@
 from typing import Optional
+import collections
 import pathlib
 import pickle
 import numpy as np
@@ -6,41 +7,49 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+class DataNormalizerStatistics(object):
+    s_a: float
+    s_b: float
+    p_a: float
+    p_b: float
+
+    def __init__(self, s_a: float, s_b: float, p_a: float, p_b: float):
+        self.s_a = s_a
+        self.s_b = s_b
+        self.p_a = p_a
+        self.p_b = p_b
+
 
 class DataNormalizer(object):
-    def __init__(self, dataloader: Optional[DataLoader] = None,
-                 s_a: Optional[float] = None,
-                 s_b: Optional[float] = None,
-                 p_a: Optional[float] = None,
-                 p_b: Optional[float] = None,
-                 ):
-        if dataloader is not None:
-            self.dataloader = dataloader
-
+    def __init__(self, statistics: Optional[DataNormalizerStatistics] = None,
+                 dataloader: Optional[DataLoader] = None):
+        if statistics is not None:
+            self.statistics = statistics
+        elif dataloader is not None:
             print("Computing normalization statistics over the whole dataset")
-            self._init_range_normalizer(magnitude_margin=0.8, IF_margin=1.0)
-        elif all([x is not None for x in [s_a, s_b, p_a, p_b]]):
-            self.s_a = s_a
-            self.s_b = s_b
-            self.p_a = p_a
-            self.p_b = p_b
+            self._init_range_normalizer(dataloader,
+                                        magnitude_margin=0.8, IF_margin=1.0)
         else:
             raise ValueError("Must either provide example dataset"
                              "or pre-computed statistics")
 
-        print("s_a:", self.s_a)
-        print("s_b:", self.s_b)
-        print("p_a:", self.p_a)
-        print("p_b:", self.p_b)
+        print("Statistics:", self.statistics)
 
-    def _init_range_normalizer(self, magnitude_margin, IF_margin):
+        # pre-compute torch tensors
+        a = np.asarray([self.statistics.s_a, self.statistics.p_a])[None, :, None, None]
+        b = np.asarray([self.statistics.s_b, self.statistics.p_b])[None, :, None, None]
+        self.a = torch.as_tensor(a).float()
+        self.b = torch.as_tensor(b).float()
+
+
+    def _init_range_normalizer(self, dataloader: DataLoader,
+                               magnitude_margin: float, IF_margin: float):
         min_spec = 10000
         max_spec = -10000
         min_IF = 10000
         max_IF = -10000
 
-        for batch_idx, (img, pitch) in enumerate(
-                tqdm(self.dataloader)):
+        for batch_idx, (img, pitch) in enumerate(tqdm(self.dataloader)):
             spec = img.select(1, 0)
             IF = img.select(1, 1)
 
@@ -54,33 +63,44 @@ class DataNormalizer(object):
             if IF.max() > max_IF:
                 max_IF = IF.max()
 
-        self.s_a = magnitude_margin * (2.0 / (max_spec - min_spec))
-        self.s_b = magnitude_margin * (-2.0 * min_spec / (max_spec - min_spec) - 1.0)
+        s_a = magnitude_margin * (2.0 / (max_spec - min_spec))
+        s_b = magnitude_margin * (-2.0 * min_spec / (max_spec - min_spec) - 1.0)
+        s_a = s_a.cpu().item()
+        s_b = s_b.cpu().item()
 
-        # min_IF = -np.pi
-        # max_IF = np.pi
+        p_a = IF_margin * (2.0 / (max_IF - min_IF))
+        p_b = IF_margin * (-2.0 * min_IF / (max_IF - min_IF) - 1.0)
+        p_a = p_a.cpu().item()
+        p_b = p_b.cpu().item()
 
-        self.p_a = IF_margin * (2.0 / (max_IF - min_IF))
-        self.p_b = IF_margin * (-2.0 * min_IF / (max_IF - min_IF) - 1.0)
+        self.statistics = DataNormalizerStatistics(s_a, s_b, p_a, p_b)
 
-    def normalize(self, feature_map):
-        a = np.asarray([self.s_a, self.p_a])[None, :, None, None]
-        b = np.asarray([self.s_b, self.p_b])[None, :, None, None]
-        a = torch.FloatTensor(a).cuda()
-        b = torch.FloatTensor(b).cuda()
+    def normalize(self, spec_and_IF: torch.Tensor):
+        device = spec_and_IF.device
+        a = self.a.to(device)
+        b = self.b.to(device)
 
-        feature_map = feature_map*a + b
+        spec_and_IF = spec_and_IF*a + b
 
-        return feature_map
+        return spec_and_IF
 
-    def denormalize(self, spec, IF):
-        spec = (spec - self.s_b) / self.s_a
-        IF = (IF-self.p_b) / self.p_a
-        return spec, IF
+    def denormalize(self, spec_and_IF: torch.Tensor):
+        device = spec_and_IF.device
+        a = self.a.to(device)
+        b = self.b.to(device)
+
+        spec_and_IF = (spec_and_IF - b) / a
+        # spec = (spec - self.s_b) / self.s_a
+        # IF = (IF - self.p_b) / self.p_a
+        return spec_and_IF
 
     def dump_statistics(self, path: pathlib.Path):
-        statistics = {
-            attr: getattr(self, attr)
-            for attr in ['s_a', 's_b', 'p_a', 'p_b']
-        }
-        pickle.dump(statistics, path.open('wb'))
+        with path.open('w') as f:
+            json.dump(self.statistics.__dict__, f, indent=4)
+
+    @classmethod
+    def load_statistics(cls, path: pathlib.Path):
+        with path.open('r') as f:
+            statistics_dict = json.load(f)
+            statistics = DataNormalizerStatistics(statistics_dict)
+        return cls(statistics=statistics)
