@@ -10,6 +10,8 @@ import GANsynth_pytorch.spec_ops as spec_ops
 import GANsynth_pytorch.phase_operation as phase_op
 
 
+SPEC_THRESHOLD = 1e-6
+
 def _linear_to_mel_matrix_np():
     """Get the mel transformation matrix."""
     _sample_rate = 16000
@@ -65,7 +67,7 @@ def melspecgrams_to_specgrams(logmelmag2: torch.Tensor, mel_p: torch.Tensor
 
     mel2l = _mel_to_linear_matrix().to(logmelmag2.device).to(logmelmag2.dtype)
     mag2 = torch.tensordot(torch.exp(logmelmag2), mel2l, dims=1)
-    logmag = 0.5 * torch.log(mag2+1e-6)
+    logmag = 0.5 * torch.log(mag2 + SPEC_THRESHOLD)
     mel_phase_angle = torch.cumsum(mel_p * np.pi, dim=time_dim)
     phase_angle = torch.tensordot(mel_phase_angle, mel2l, dims=time_dim)
     p = phase_op.instantaneous_frequency(phase_angle, time_axis=time_dim)
@@ -101,7 +103,7 @@ def specgrams_to_melspecgrams(magnitude: torch.Tensor, IF: torch.Tensor
     phase_angle = torch.cumsum(p * np.pi, axis=time_dim)
 
     l2mel = _linear_to_mel_matrix().float().to(mag2.device)
-    logmelmag2 = torch.log(torch.matmul(mag2, l2mel) + 1e-6)
+    logmelmag2 = torch.log(torch.matmul(mag2, l2mel) + SPEC_THRESHOLD)
     mel_phase_angle = torch.matmul(phase_angle, l2mel)
     mel_p = phase_op.instantaneous_frequency(mel_phase_angle,
                                              time_axis=time_dim)
@@ -120,7 +122,7 @@ def logmag_and_IF_to_audio(logmag: torch.Tensor, IF: torch.Tensor,
                            hop_length: int, n_fft: int) -> torch.Tensor:
     batch_dim, freq_dim, time_dim = 0, 1, 2
 
-    mag = torch.exp(logmag) - 1.0e-6
+    mag = torch.exp(logmag) - SPEC_THRESHOLD
     reconstructed_magnitude = torch.abs(mag)
 
     reconstructed_phase_angle = torch.cumsum(IF * np.pi, dim=time_dim)

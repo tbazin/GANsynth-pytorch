@@ -30,13 +30,12 @@ from typing import Tuple, Optional, List, Union, Iterable
 
 
 class NSynth(data.Dataset):
-
     """Pytorch dataset for NSynth dataset
     args:
         root: root dir containing examples.json and audio directory with
             wav files.
         transform (callable, optional): A function/transform that takes in
-                a sample and returns a transformed version.
+            a sample and returns a transformed version.
         target_transform (callable, optional): A function/transform that takes
             in the target and transforms it.
         blacklist_pattern: list of string used to blacklist dataset element.
@@ -47,7 +46,6 @@ class NSynth(data.Dataset):
             Each field value will be encoding as an integer using sklearn
             LabelEncoder.
     """
-
     def __init__(self, audio_directory_paths: Union[Iterable[str], str],
                  json_data_path: str,
                  transform=None, target_transform=None,
@@ -237,7 +235,8 @@ class WavToSpectrogramDataLoader(torch.utils.data.DataLoader):
                  pin_memory=False, drop_last=False, timeout=0,
                  worker_init_fn=None, multiprocessing_context=None,
                  n_fft: int = 2048, hop_length: int = 512,
-                 device: str = 'cpu'
+                 device: str = 'cpu',
+                 transform: Optional[object] = None
                  ):
         super().__init__(dataset, batch_size=batch_size,
                          shuffle=shuffle, sampler=sampler,
@@ -250,6 +249,7 @@ class WavToSpectrogramDataLoader(torch.utils.data.DataLoader):
         self.n_fft = n_fft
         self.hop_length = hop_length
         self.device = device
+        self.transform = transform
 
     @property
     def to_mel_spec_and_IF_image_transform(self) -> transforms.Compose:
@@ -267,11 +267,17 @@ class WavToSpectrogramDataLoader(torch.utils.data.DataLoader):
                                      n_fft=self.n_fft,
                                      hop_length=self.hop_length)
 
-        def to_image_collated(wav_and_targets):
-            spec = to_image(wav_and_targets[0])
-            targets = wav_and_targets[1:]
-            return [spec] + targets
-        my_transforms.append(to_image_collated)
+        def make_collated_transform(transform):
+            def collated_transform(data_and_targets):
+                transformed_data = transform(data_and_targets[0])
+                targets = data_and_targets[1:]
+                return [transformed_data] + targets
+            return collated_transform
+
+        my_transforms.append(make_collated_transform(to_image))
+
+        if self.transform is not None:
+            my_transforms.append(make_collated_transform(self.transform))
 
         return transforms.Compose(my_transforms)
 
@@ -297,6 +303,43 @@ def wavfile_to_melspec_and_IF(audio_path: pathlib.Path
                                  mel_IF],
                                 dim=channel_dim)
     return mel_spec_and_IF
+
+
+def mask_phase(spec_and_IF: torch.Tensor,
+               threshold: float=-13,  # TODO(theis) define a proper threshold
+               min_value_spec: float=spec_helper.SPEC_THRESHOLD):
+    """
+    20200117(theis): threshold set at -13~~log(2e-6) since the
+    spectrograms returned by the NSynth dataset have minimum amplitude
+    spec_helpers.SPEC_THRESHOLD = log(1e-6)
+    """
+    if spec_and_IF.ndim == 3:
+        channel_dim = 0
+    elif spec_and_IF.ndim == 4:
+        channel_dim = 1
+    else:
+        raise ValueError(
+            f"Incorrect shape {spec_and_IF.shape} for parameter spec_and_IF")
+    spec = spec_and_IF.select(channel_dim, 0)
+    IF = spec_and_IF.select(channel_dim, 1)
+    mask = spec < threshold
+
+    spec_fill_value = np.log(min_value_spec)
+    spec.masked_fill_(mask, spec_fill_value)
+    IF.masked_fill_(mask, 0)
+    return spec_and_IF
+
+def make_masked_phase_transform(threshold: float=-13,  # TODO(theis) define a proper threshold
+                                min_value_spec: float=spec_helper.SPEC_THRESHOLD):
+    """
+    20200117(theis): threshold set at -13~~log(2e-6) since the
+    spectrograms returned by the NSynth dataset have minimum amplitude
+    spec_helpers.SPEC_THRESHOLD = log(1e-6)
+    """
+    partial_mask_phase = functools.partial(
+        mask_phase,
+        threshold=threshold, min_value_spec=min_value_spec)
+    return transforms.Lambda(partial_mask_phase)
 
 
 if __name__ == "__main__":
