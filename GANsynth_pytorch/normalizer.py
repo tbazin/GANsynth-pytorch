@@ -1,7 +1,7 @@
 from typing import Optional
 import collections
 import pathlib
-import pickle
+import json
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -33,7 +33,7 @@ class DataNormalizer(object):
             raise ValueError("Must either provide example dataset"
                              "or pre-computed statistics")
 
-        print("Statistics:", self.statistics)
+        print("Statistics:", self.statistics.__dict__)
 
         # pre-compute torch tensors
         a = np.asarray([self.statistics.s_a, self.statistics.p_a])[None, :, None, None]
@@ -49,7 +49,7 @@ class DataNormalizer(object):
         min_IF = 10000
         max_IF = -10000
 
-        for batch_idx, (img, pitch) in enumerate(tqdm(self.dataloader)):
+        for batch_idx, (img, pitch) in enumerate(tqdm(dataloader)):
             spec = img.select(1, 0)
             IF = img.select(1, 1)
 
@@ -102,5 +102,5 @@ class DataNormalizer(object):
     def load_statistics(cls, path: pathlib.Path):
         with path.open('r') as f:
             statistics_dict = json.load(f)
-            statistics = DataNormalizerStatistics(statistics_dict)
+            statistics = DataNormalizerStatistics(**statistics_dict)
         return cls(statistics=statistics)
