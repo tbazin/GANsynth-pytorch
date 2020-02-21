@@ -287,11 +287,28 @@ class WavToSpectrogramDataLoader(torch.utils.data.DataLoader):
                    wavforms_iterator)
 
 
-def wavfile_to_melspec_and_IF(audio_path: pathlib.Path
+def wavfile_to_melspec_and_IF(audio_path: pathlib.Path,
+                              target_fs_hz: int = 16000,
+                              duration_s: float = 4,
+                              to_mono: bool = True
                               ) -> torch.Tensor:
     """Load and convert a single audio file"""
     sample_audio, fs_hz = torchaudio.load_wav(audio_path,
                                               channels_first=True)
+
+    # resample to target sampling frequency
+    if not fs_hz == target_fs_hz:
+        resampler = torchaudio.transforms.Resample(
+            orig_freq=fs_hz, new_freq=target_fs_hz)
+        sample_audio = resampler(sample_audio.cuda())
+
+    if to_mono:
+        sample_audio = sample_audio.sum(0)
+
+    # trim from beginning for the selected duration
+    duration_n = int(duration_s * target_fs_hz)
+    sample_audio = sample_audio[:duration_n]
+
     toFloat = transforms.Lambda(lambda x: (x / np.iinfo(np.int16).max))
     sample_audio = toFloat(sample_audio)
     mel_spec, mel_IF = get_mel_spectrogram_and_IF(
