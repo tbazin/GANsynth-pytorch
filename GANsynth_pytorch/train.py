@@ -2,8 +2,8 @@ import os
 import random
 import warnings
 from PIL import Image
-from PGGAN import *
-from normalizer import DataNormalizer
+from GANsynth_pytorch.PGGAN import *
+from GANsynth_pytorch.normalizer import DataNormalizer
 import torch.optim as optim
 import torch.backends.cudnn as cudnn
 import torchvision.utils as vutils
@@ -32,12 +32,10 @@ TOTAL_DATA_SIZE=11864 #validation Nsynth dataset size. If use trainingset, this 
 
 
 class NsynthDataLoader(object):
-    def __init__(self):
+    def __init__(self, dataset_path: str):
         cuda = torch.device("cuda:0")
-        instr='guitar'
-        # Nsynth_spec_IF_pitch.hdf5
-        # self.dataset = h5py.File('../data/Nsynth_spec_IF_pitch.hdf5','r')     
-        self.dataset = h5py.File('data/Nsynth_valid_spec_IF_pitch_and_melSpec.hdf5','r')     
+        self.dataset_path = dataset_path
+        self.dataset = h5py.File(dataset_path,'r')     
         spec = self.dataset["Spec"][:]
         IF = self.dataset["IF"][:]
         pitch = self.dataset["pitch"][:]
