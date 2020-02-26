@@ -171,7 +171,7 @@ def expand(t: torch.Tensor) -> torch.Tensor:
 
 
 def get_spectrogram_and_IF(sample: torch.Tensor, n_fft: int = 2048,
-                           hop_length: int = 512
+                           hop_length: int = 512, use_mel_scale: bool = True
                            ) -> Tuple[torch.Tensor, torch.Tensor]:
     if sample.ndim == 1:
         sample = sample.unsqueeze(0)
@@ -192,17 +192,14 @@ def get_spectrogram_and_IF(sample: torch.Tensor, n_fft: int = 2048,
 
     logmagnitude = expand(logmagnitude)
     IF = expand(IF)
-    return logmagnitude, IF
+    # return logmagnitude, IF
 
-
-def get_mel_spectrogram_and_IF(sample: torch.Tensor, n_fft: int = 2048,
-                               hop_length: int = 512) -> torch.Tensor:
-    magnitude_float64, IF_float64 = get_spectrogram_and_IF(
-        sample, n_fft=n_fft, hop_length=hop_length)
-
-    logmelmag2_float64, mel_p_float64 = spec_helper.specgrams_to_melspecgrams(
-        magnitude_float64, IF_float64)
-    return logmelmag2_float64, mel_p_float64
+    if use_mel_scale:
+        mel_logmagnitude, mel_IF = spec_helper.specgrams_to_melspecgrams(
+            logmagnitude, IF)
+        return mel_logmagnitude, mel_IF
+    else:
+        return logmagnitude, IF
 
 
 def channels_to_image(channels: List[torch.Tensor]):
@@ -213,19 +210,23 @@ def channels_to_image(channels: List[torch.Tensor]):
                      dim=channel_dimension)
 
 
-def to_mel_spec_and_IF_image(sample: torch.Tensor, n_fft: int = 2048,
-                             hop_length: int = 512) -> torch.Tensor:
+def to_spec_and_IF_image(sample: torch.Tensor, n_fft: int = 2048,
+                         hop_length: int = 512,
+                         use_mel_scale: bool = True) -> torch.Tensor:
     """Transforms wav samples to image-like mel-spectrograms [magnitude, IF]"""
-    mel_spec_and_IF = get_mel_spectrogram_and_IF(
-        sample, hop_length=hop_length, n_fft=n_fft)
-    mel_spec_and_IF_as_image_tensor = channels_to_image(mel_spec_and_IF)
-    return mel_spec_and_IF_as_image_tensor
+    spec_and_IF = get_spectrogram_and_IF(
+        sample, hop_length=hop_length, n_fft=n_fft,
+        use_mel_scale=use_mel_scale)
+    spec_and_IF_as_image_tensor = channels_to_image(spec_and_IF)
+    return spec_and_IF_as_image_tensor
 
 
-def make_to_mel_spec_and_IF_image_transform(n_fft: int = 2048,
-                                            hop_length: int = 512):
-    to_image_transform = functools.partial(to_mel_spec_and_IF_image,
-                                           n_fft=n_fft, hop_length=hop_length)
+def make_to_spec_and_IF_image_transform(n_fft: int = 2048,
+                                        hop_length: int = 512,
+                                        use_mel_scale: bool = True):
+    to_image_transform = functools.partial(to_spec_and_IF_image,
+                                           n_fft=n_fft, hop_length=hop_length,
+                                           use_mel_scale=use_mel_scale)
     return transforms.Lambda(to_image_transform)
 
 
@@ -236,7 +237,8 @@ class WavToSpectrogramDataLoader(torch.utils.data.DataLoader):
                  worker_init_fn=None, multiprocessing_context=None,
                  n_fft: int = 2048, hop_length: int = 512,
                  device: str = 'cpu',
-                 transform: Optional[object] = None
+                 transform: Optional[object] = None,
+                 use_mel_scale: bool = True
                  ):
         super().__init__(dataset, batch_size=batch_size,
                          shuffle=shuffle, sampler=sampler,
@@ -250,9 +252,10 @@ class WavToSpectrogramDataLoader(torch.utils.data.DataLoader):
         self.hop_length = hop_length
         self.device = device
         self.transform = transform
+        self.use_mel_scale = use_mel_scale
 
     @property
-    def to_mel_spec_and_IF_image_transform(self) -> transforms.Compose:
+    def to_spec_and_IF_image_transform(self) -> transforms.Compose:
         """Return a Transform to use for efficient data generation"""
         my_transforms = []
 
@@ -263,9 +266,10 @@ class WavToSpectrogramDataLoader(torch.utils.data.DataLoader):
                 return [wav] + targets
             my_transforms.append(to_device_collated)
 
-        to_image = functools.partial(to_mel_spec_and_IF_image,
+        to_image = functools.partial(to_spec_and_IF_image,
                                      n_fft=self.n_fft,
-                                     hop_length=self.hop_length)
+                                     hop_length=self.hop_length,
+                                     use_mel_scale=self.use_mel_scale)
 
         def make_collated_transform(transform):
             def collated_transform(data_and_targets):
@@ -283,16 +287,17 @@ class WavToSpectrogramDataLoader(torch.utils.data.DataLoader):
 
     def __iter__(self):
         wavforms_iterator = super().__iter__()
-        return map(self.to_mel_spec_and_IF_image_transform,
+        return map(self.to_spec_and_IF_image_transform,
                    wavforms_iterator)
 
 
-def wavfile_to_melspec_and_IF(audio_path: pathlib.Path,
-                              target_fs_hz: int = 16000,
-                              duration_s: float = 4,
-                              to_mono: bool = True,
-                              zero_pad: bool = True
-                              ) -> torch.Tensor:
+def wavfile_to_spec_and_IF(audio_path: pathlib.Path,
+                           target_fs_hz: int = 16000,
+                           duration_s: float = 4,
+                           to_mono: bool = True,
+                           zero_pad: bool = True,
+                           use_mel_scale: bool = True
+                           ) -> torch.Tensor:
     """Load and convert a single audio file"""
     sample_audio, fs_hz = torchaudio.load_wav(audio_path,
                                               channels_first=True)
@@ -319,20 +324,20 @@ def wavfile_to_melspec_and_IF(audio_path: pathlib.Path,
 
     toFloat = transforms.Lambda(lambda x: (x / np.iinfo(np.int16).max))
     sample_audio = toFloat(sample_audio)
-    mel_spec, mel_IF = get_mel_spectrogram_and_IF(
-        sample_audio)
+    spec, IF = get_spectrogram_and_IF(
+        sample_audio, use_mel_scale=use_mel_scale)
     channel_dim = 1
-    mel_spec = mel_spec.unsqueeze(channel_dim)
-    mel_IF = mel_IF.unsqueeze(channel_dim)
-    mel_spec_and_IF = torch.cat([mel_spec,
-                                 mel_IF],
-                                dim=channel_dim)
-    return mel_spec_and_IF
+    spec = spec.unsqueeze(channel_dim)
+    IF = IF.unsqueeze(channel_dim)
+    spec_and_IF = torch.cat([spec,
+                             IF],
+                            dim=channel_dim)
+    return spec_and_IF
 
 
 def mask_phase(spec_and_IF: torch.Tensor,
-               threshold: float=-13,  # TODO(theis) define a proper threshold
-               min_value_spec: float=spec_helper.SPEC_THRESHOLD):
+               threshold: float = -13,  # TODO(theis) define a proper threshold
+               min_value_spec: float = spec_helper.SPEC_THRESHOLD):
     """
     20200117(theis): threshold set at -13~~log(2e-6) since the
     spectrograms returned by the NSynth dataset have minimum amplitude
@@ -354,8 +359,9 @@ def mask_phase(spec_and_IF: torch.Tensor,
     IF.masked_fill_(mask, 0)
     return spec_and_IF
 
-def make_masked_phase_transform(threshold: float=-13,  # TODO(theis) define a proper threshold
-                                min_value_spec: float=spec_helper.SPEC_THRESHOLD):
+
+def make_masked_phase_transform(threshold: float = -13,  # TODO(theis) define a proper threshold
+                                min_value_spec: float = spec_helper.SPEC_THRESHOLD):
     """
     20200117(theis): threshold set at -13~~log(2e-6) since the
     spectrograms returned by the NSynth dataset have minimum amplitude
