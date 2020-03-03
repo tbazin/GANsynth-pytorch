@@ -50,7 +50,7 @@ def _linear_to_mel_matrix_to_mel_to_linear_matrix(m: torch.Tensor
     """Get the inverse mel transformation matrix."""
     m_t = m.T
     p = torch.matmul(m, m_t)
-    sums = torch.sum(p, axis=0)
+    sums = torch.sum(p, dim=0)
     d = torch.where(torch.abs(sums).gt(1.e-8), 1.0/sums, sums)
     return torch.matmul(m_t, torch.diag(d))
 
@@ -140,7 +140,7 @@ def specgrams_to_melspecgrams(magnitude: torch.Tensor, IF: torch.Tensor,
     batch_dim, freq_dim, time_dim = (0, 2, 1)
 
     mag2 = torch.exp(2.0 * logmag)
-    phase_angle = torch.cumsum(p * np.pi, axis=time_dim)
+    phase_angle = torch.cumsum(p * np.pi, dim=time_dim)
 
     linear_to_mel_np = spec_ops.linear_to_mel_weight_matrix(
         num_mel_bins, num_freq_bins, sample_rate, lower_edge_hertz,
