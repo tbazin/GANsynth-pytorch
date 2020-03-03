@@ -15,7 +15,7 @@ def plot_mel_representations(log_melspec: np.ndarray, mel_IF: np.ndarray,
         if ax_spec is not None:
             ax.set_title("log-melspectrogram")
         else:
-        plt.title("log-melspectrogram")
+            plt.title("log-melspectrogram")
 
     ax = ax_IF or plt.subplot(1, 2, 2)
     librosa.display.specshow(mel_IF, sr=fs_hz, hop_length=hop_length,
@@ -24,14 +24,15 @@ def plot_mel_representations(log_melspec: np.ndarray, mel_IF: np.ndarray,
         if ax_IF is not None:
             ax.set_title("mel-IF")
         else:
-        plt.title("mel-IF")
+            plt.title("mel-IF")
 
     # plt.tight_layout()
 
     # return plt.gcf()
 
 
-def plot_mel_representations_batch(log_melspecs: np.ndarray, mel_IFs: np.ndarray,
+def plot_mel_representations_batch(log_melspecs: np.ndarray,
+                                   mel_IFs: np.ndarray,
                                    hop_length: int, fs_hz: int):
     # input data shape is [BATCH, FREQ, TIME]
     # with BATCH = 2*INPUT samples, containing originals and reconstructions
