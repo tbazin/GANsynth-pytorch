@@ -9,8 +9,7 @@ def plot_mel_representations(log_melspec: np.ndarray, mel_IF: np.ndarray,
                              ax_spec=None, ax_IF=None, print_title: bool = True
                              ) -> None:
     ax = ax_spec or plt.subplot(1, 2, 1)
-    librosa.display.specshow(log_melspec, sr=fs_hz, hop_length=hop_length,
-                             y_axis='mel', ax=ax)
+    librosa.display.specshow(log_melspec, sr=fs_hz, hop_length=hop_length, ax=ax)
     if print_title:
         if ax_spec is not None:
             ax.set_title("log-melspectrogram")
@@ -18,8 +17,7 @@ def plot_mel_representations(log_melspec: np.ndarray, mel_IF: np.ndarray,
             plt.title("log-melspectrogram")
 
     ax = ax_IF or plt.subplot(1, 2, 2)
-    librosa.display.specshow(mel_IF, sr=fs_hz, hop_length=hop_length,
-                             y_axis='mel', ax=ax)
+    librosa.display.specshow(mel_IF, sr=fs_hz, hop_length=hop_length, ax=ax)
     if print_title:
         if ax_IF is not None:
             ax.set_title("mel-IF")
