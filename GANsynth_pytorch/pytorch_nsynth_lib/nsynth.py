@@ -11,22 +11,20 @@ import os
 import pathlib
 import json
 import glob
-from tqdm import tqdm
 import numpy as np
 import scipy.signal
 
 import torch
 import torchaudio
 import torch.utils.data as data
+from torch.utils.data.sampler import Sampler
 import torchvision.transforms as transforms
 from sklearn.preprocessing import LabelEncoder
-import librosa
 from .. import phase_operation
 from .. import spectrograms_helper as spec_helper
-import numpy as np
 import functools
 
-from typing import Tuple, Optional, List, Union, Iterable
+from typing import Tuple, Optional, List, Union, Iterable, Callable
 
 
 class NSynth(data.Dataset):
@@ -58,7 +56,7 @@ class NSynth(data.Dataset):
         assert(isinstance(blacklist_pattern, list))
         assert(isinstance(categorical_field_list, list))
 
-        self.filenames = []
+        self.filenames: List[str] = []
         # ensure audio_directory_paths is an iterable
         try:
             _ = audio_directory_paths[0]
@@ -231,10 +229,15 @@ def make_to_spec_and_IF_image_transform(n_fft: int = 2048,
 
 
 class WavToSpectrogramDataLoader(torch.utils.data.DataLoader):
-    def __init__(self, dataset, batch_size=1, shuffle=False, sampler=None,
-                 batch_sampler=None, num_workers=0, collate_fn=None,
-                 pin_memory=False, drop_last=False, timeout=0,
-                 worker_init_fn=None, multiprocessing_context=None,
+    def __init__(self, dataset,
+                 batch_size: int = 1, shuffle: bool = False,
+                 sampler: Sampler = None,
+                 batch_sampler: Sampler = None,
+                 num_workers: int = 0, collate_fn=None,
+                 pin_memory: bool = False, drop_last: bool = False,
+                 timeout: float = 0,
+                 worker_init_fn: Callable[[int], None] = None,
+                 multiprocessing_context=None,
                  n_fft: int = 2048, hop_length: int = 512,
                  device: str = 'cpu',
                  transform: Optional[object] = None,
@@ -371,21 +374,3 @@ def make_masked_phase_transform(threshold: float = -13,  # TODO(theis) define a 
         mask_phase,
         threshold=threshold, min_value_spec=min_value_spec)
     return transforms.Lambda(partial_mask_phase)
-
-
-if __name__ == "__main__":
-    # audio samples are loaded as an int16 numpy array
-    # rescale intensity range as float [-1, 1]
-    toFloat = transforms.Lambda(lambda x: x / np.iinfo(np.int16).max)
-    # use instrument_family and instrument_source as classification targets
-    dataset = NSynth(
-        "../nsynth-test",
-        transform=toFloat,
-        blacklist_pattern=["string"],  # blacklist string instrument
-        categorical_field_list=["instrument_family", "instrument_source"])
-    loader = data.DataLoader(dataset, batch_size=32, shuffle=True)
-    for samples, instrument_family_target, instrument_source_target, targets \
-            in loader:
-        print(samples.shape, instrument_family_target.shape,
-              instrument_source_target.shape)
-        print(torch.min(samples), torch.max(samples))

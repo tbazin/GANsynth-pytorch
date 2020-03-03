@@ -1,3 +1,4 @@
+from typing import Iterable
 import numpy as np
 
 # mel spectrum constants.
@@ -5,23 +6,34 @@ _MEL_BREAK_FREQUENCY_HERTZ = 700.0
 _MEL_HIGH_FREQUENCY_Q = 1127.0
 
 
-def mel_to_hertz(mel_values):
+def mel_to_hertz(mel_values: Iterable[float],
+                 mel_break_frequency_hertz: float = _MEL_BREAK_FREQUENCY_HERTZ,
+                 mel_high_frequency_q: float = _MEL_HIGH_FREQUENCY_Q
+                 ) -> np.array:
     """Converts frequencies in `mel_values` from the mel scale to linear scale."""
-    return _MEL_BREAK_FREQUENCY_HERTZ * (
-        np.exp(np.array(mel_values) / _MEL_HIGH_FREQUENCY_Q) - 1.0)
+    return mel_break_frequency_hertz * (
+        np.exp(np.array(mel_values) / mel_high_frequency_q) - 1.0)
 
 
-def hertz_to_mel(frequencies_hertz):
+def hertz_to_mel(frequencies_hertz: Iterable[float],
+                 mel_break_frequency_hertz: float = _MEL_BREAK_FREQUENCY_HERTZ,
+                 mel_high_frequency_q: float = _MEL_HIGH_FREQUENCY_Q
+                 ) -> np.array:
     """Converts frequencies in `frequencies_hertz` in Hertz to the mel scale."""
-    return _MEL_HIGH_FREQUENCY_Q * np.log(
-        1.0 + (np.array(frequencies_hertz) / _MEL_BREAK_FREQUENCY_HERTZ))
+    return mel_high_frequency_q * np.log(
+        1.0 + (np.array(frequencies_hertz) / mel_break_frequency_hertz))
 
 
 def linear_to_mel_weight_matrix(num_mel_bins=20,
                                 num_spectrogram_bins=129,
                                 sample_rate=16000,
                                 lower_edge_hertz=125.0,
-                                upper_edge_hertz=3800.0):
+                                upper_edge_hertz=3800.0,
+                                mel_break_frequency_hertz: float = (
+                                    _MEL_BREAK_FREQUENCY_HERTZ),
+                                mel_high_frequency_q: float = (
+                                    _MEL_HIGH_FREQUENCY_Q)
+                                ) -> np.array:
     """Returns a matrix to warp linear scale spectrograms to the mel scale.
     Adapted from tf.contrib.signal.linear_to_mel_weight_matrix with a minimum
     band width (in Hz scale) of 1.5 * freq_bin. To preserve accuracy,
@@ -39,6 +51,14 @@ def linear_to_mel_weight_matrix(num_mel_bins=20,
     Raises:
         ValueError: Input argument in the wrong range.
     """
+    def mel_to_hertz_partial(mel_values: Iterable[float]) -> np.array:
+        return mel_to_hertz(mel_values, mel_break_frequency_hertz,
+                            mel_high_frequency_q)
+
+    def hertz_to_mel_partial(frequencies_hertz: Iterable[float]) -> np.array:
+        return hertz_to_mel(frequencies_hertz, mel_break_frequency_hertz,
+                            mel_high_frequency_q)
+
     # Validate input arguments
     if num_mel_bins <= 0:
         raise ValueError('num_mel_bins must be positive. Got: %s' % num_mel_bins)
@@ -63,14 +83,15 @@ def linear_to_mel_weight_matrix(num_mel_bins=20,
     nyquist_hertz = sample_rate / 2.0
     linear_frequencies = np.linspace(
         0.0, nyquist_hertz, num_spectrogram_bins)[bands_to_zero:, np.newaxis]
-    # spectrogram_bins_mel = hertz_to_mel(linear_frequencies)
+    # spectrogram_bins_mel = hertz_to_mel_partial(linear_frequencies)
 
     # Compute num_mel_bins triples of (lower_edge, center, upper_edge). The
     # center of each band is the lower and upper edge of the adjacent bands.
     # Accordingly, we divide [lower_edge_hertz, upper_edge_hertz] into
     # num_mel_bins + 2 pieces.
     band_edges_mel = np.linspace(
-        hertz_to_mel(lower_edge_hertz), hertz_to_mel(upper_edge_hertz),
+        hertz_to_mel_partial(lower_edge_hertz),
+        hertz_to_mel_partial(upper_edge_hertz),
         num_mel_bins + 2)
 
     lower_edge_mel = band_edges_mel[0:-2]
@@ -80,18 +101,18 @@ def linear_to_mel_weight_matrix(num_mel_bins=20,
     freq_res = nyquist_hertz / float(num_spectrogram_bins)
     freq_th = 1.5 * freq_res
     for i in range(0, num_mel_bins):
-        center_hz = mel_to_hertz(center_mel[i])
-        lower_hz = mel_to_hertz(lower_edge_mel[i])
-        upper_hz = mel_to_hertz(upper_edge_mel[i])
+        center_hz = mel_to_hertz_partial(center_mel[i])
+        lower_hz = mel_to_hertz_partial(lower_edge_mel[i])
+        upper_hz = mel_to_hertz_partial(upper_edge_mel[i])
         if upper_hz - lower_hz < freq_th:
             rhs = 0.5 * freq_th / (center_hz + _MEL_BREAK_FREQUENCY_HERTZ)
             dm = _MEL_HIGH_FREQUENCY_Q * np.log(rhs + np.sqrt(1.0 + rhs**2))
             lower_edge_mel[i] = center_mel[i] - dm
             upper_edge_mel[i] = center_mel[i] + dm
 
-    lower_edge_hz = mel_to_hertz(lower_edge_mel)[np.newaxis, :]
-    center_hz = mel_to_hertz(center_mel)[np.newaxis, :]
-    upper_edge_hz = mel_to_hertz(upper_edge_mel)[np.newaxis, :]
+    lower_edge_hz = mel_to_hertz_partial(lower_edge_mel)[np.newaxis, :]
+    center_hz = mel_to_hertz_partial(center_mel)[np.newaxis, :]
+    upper_edge_hz = mel_to_hertz_partial(upper_edge_mel)[np.newaxis, :]
 
     # Calculate lower and upper slopes for every spectrogram bin.
     # Line segments are linear in the mel domain, not Hertz.
