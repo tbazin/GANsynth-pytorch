@@ -6,20 +6,31 @@ _MEL_BREAK_FREQUENCY_HERTZ = 700.0
 _MEL_HIGH_FREQUENCY_Q = 1127.0
 
 
+def get_mel_high_frequency_q(mel_break_frequency_hertz: float) -> float:
+    if mel_break_frequency_hertz != _MEL_BREAK_FREQUENCY_HERTZ:
+        # by convention, 1000mels should be equal to 1000Hz
+        return 1000 / np.log(1 + 1000/mel_break_frequency_hertz)
+    else:
+        # for consistency with the GANSynth codebase
+        return _MEL_HIGH_FREQUENCY_Q
+
+
 def mel_to_hertz(mel_values: Iterable[float],
-                 mel_break_frequency_hertz: float = _MEL_BREAK_FREQUENCY_HERTZ,
-                 mel_high_frequency_q: float = _MEL_HIGH_FREQUENCY_Q
+                 mel_break_frequency_hertz: float = _MEL_BREAK_FREQUENCY_HERTZ
                  ) -> np.array:
-    """Converts frequencies in `mel_values` from the mel scale to linear scale."""
+    """Converts frequencies in `mel_values` from the mel scale to linear scale
+    """
+    mel_high_frequency_q = get_mel_high_frequency_q(mel_break_frequency_hertz)
     return mel_break_frequency_hertz * (
         np.exp(np.array(mel_values) / mel_high_frequency_q) - 1.0)
 
 
 def hertz_to_mel(frequencies_hertz: Iterable[float],
-                 mel_break_frequency_hertz: float = _MEL_BREAK_FREQUENCY_HERTZ,
-                 mel_high_frequency_q: float = _MEL_HIGH_FREQUENCY_Q
+                 mel_break_frequency_hertz: float = _MEL_BREAK_FREQUENCY_HERTZ
                  ) -> np.array:
-    """Converts frequencies in `frequencies_hertz` in Hertz to the mel scale."""
+    """Converts frequencies in `frequencies_hertz` in Hertz to the mel scale
+    """
+    mel_high_frequency_q = get_mel_high_frequency_q(mel_break_frequency_hertz)
     return mel_high_frequency_q * np.log(
         1.0 + (np.array(frequencies_hertz) / mel_break_frequency_hertz))
 
@@ -30,9 +41,7 @@ def linear_to_mel_weight_matrix(num_mel_bins=20,
                                 lower_edge_hertz=125.0,
                                 upper_edge_hertz=3800.0,
                                 mel_break_frequency_hertz: float = (
-                                    _MEL_BREAK_FREQUENCY_HERTZ),
-                                mel_high_frequency_q: float = (
-                                    _MEL_HIGH_FREQUENCY_Q)
+                                    _MEL_BREAK_FREQUENCY_HERTZ)
                                 ) -> np.array:
     """Returns a matrix to warp linear scale spectrograms to the mel scale.
     Adapted from tf.contrib.signal.linear_to_mel_weight_matrix with a minimum
@@ -52,12 +61,10 @@ def linear_to_mel_weight_matrix(num_mel_bins=20,
         ValueError: Input argument in the wrong range.
     """
     def mel_to_hertz_partial(mel_values: Iterable[float]) -> np.array:
-        return mel_to_hertz(mel_values, mel_break_frequency_hertz,
-                            mel_high_frequency_q)
+        return mel_to_hertz(mel_values, mel_break_frequency_hertz)
 
     def hertz_to_mel_partial(frequencies_hertz: Iterable[float]) -> np.array:
-        return hertz_to_mel(frequencies_hertz, mel_break_frequency_hertz,
-                            mel_high_frequency_q)
+        return hertz_to_mel(frequencies_hertz, mel_break_frequency_hertz)
 
     # Validate input arguments
     if num_mel_bins <= 0:
@@ -77,6 +84,8 @@ def linear_to_mel_weight_matrix(num_mel_bins=20,
         raise ValueError('upper_edge_hertz must not be larger than the Nyquist '
                          'frequency (sample_rate / 2). Got: %s for sample_rate: %s'
                          % (upper_edge_hertz, sample_rate))
+
+    mel_high_frequency_q = get_mel_high_frequency_q(mel_break_frequency_hertz)
 
     # HTK excludes the spectrogram DC bin.
     bands_to_zero = 1
@@ -105,8 +114,8 @@ def linear_to_mel_weight_matrix(num_mel_bins=20,
         lower_hz = mel_to_hertz_partial(lower_edge_mel[i])
         upper_hz = mel_to_hertz_partial(upper_edge_mel[i])
         if upper_hz - lower_hz < freq_th:
-            rhs = 0.5 * freq_th / (center_hz + _MEL_BREAK_FREQUENCY_HERTZ)
-            dm = _MEL_HIGH_FREQUENCY_Q * np.log(rhs + np.sqrt(1.0 + rhs**2))
+            rhs = 0.5 * freq_th / (center_hz + mel_break_frequency_hertz)
+            dm = mel_high_frequency_q * np.log(rhs + np.sqrt(1.0 + rhs**2))
             lower_edge_mel[i] = center_mel[i] - dm
             upper_edge_mel[i] = center_mel[i] + dm
 

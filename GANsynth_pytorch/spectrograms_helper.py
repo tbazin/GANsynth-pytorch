@@ -64,8 +64,6 @@ def melspecgrams_to_specgrams(logmelmag2: torch.Tensor, mel_IF: torch.Tensor,
                               num_mel_bins: Optional[int] = None,
                               mel_break_frequency_hertz: float = (
                                     spec_ops._MEL_BREAK_FREQUENCY_HERTZ),
-                              mel_high_frequency_q: float = (
-                                    spec_ops._MEL_HIGH_FREQUENCY_Q)
                               ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Converts melspecgrams to specgrams.
     Args:
@@ -88,7 +86,7 @@ def melspecgrams_to_specgrams(logmelmag2: torch.Tensor, mel_IF: torch.Tensor,
         num_mel_bins = num_freq_bins // mel_downscale
     linear_to_mel_np = spec_ops.linear_to_mel_weight_matrix(
         num_mel_bins, num_freq_bins, sample_rate, lower_edge_hertz,
-        upper_edge_hertz, mel_break_frequency_hertz, mel_high_frequency_q)
+        upper_edge_hertz, mel_break_frequency_hertz)
     linear_to_mel = (torch.from_numpy(linear_to_mel_np)
                      .to(logmelmag2.device)
                      .to(logmelmag2.dtype))
@@ -118,8 +116,6 @@ def specgrams_to_melspecgrams(magnitude: torch.Tensor, IF: torch.Tensor,
                               num_mel_bins: Optional[int] = None,
                               mel_break_frequency_hertz: float = (
                                     spec_ops._MEL_BREAK_FREQUENCY_HERTZ),
-                              mel_high_frequency_q: float = (
-                                    spec_ops._MEL_HIGH_FREQUENCY_Q)
                               ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Converts specgrams to melspecgrams.
 
@@ -146,7 +142,7 @@ def specgrams_to_melspecgrams(magnitude: torch.Tensor, IF: torch.Tensor,
         num_mel_bins = num_freq_bins // mel_downscale
     linear_to_mel_np = spec_ops.linear_to_mel_weight_matrix(
         num_mel_bins, num_freq_bins, sample_rate, lower_edge_hertz,
-        upper_edge_hertz, mel_break_frequency_hertz, mel_high_frequency_q)
+        upper_edge_hertz, mel_break_frequency_hertz)
     linear_to_mel = (torch.from_numpy(linear_to_mel_np)
                      .to(mag2.device)
                      .to(mag2.dtype))
@@ -192,9 +188,7 @@ def mel_logmag_and_IF_to_audio(mel_logmag: torch.Tensor, mel_IF: torch.Tensor,
                                lower_edge_hertz: float = 0.0,
                                upper_edge_hertz: float = 16000 / 2.0,
                                mel_break_frequency_hertz: float = (
-                                     spec_ops._MEL_BREAK_FREQUENCY_HERTZ),
-                               mel_high_frequency_q: float = (
-                                     spec_ops._MEL_HIGH_FREQUENCY_Q)
+                                     spec_ops._MEL_BREAK_FREQUENCY_HERTZ)
                                ) -> torch.Tensor:
     batch_dim, freq_dim, time_dim = 0, 1, 2
 
@@ -202,8 +196,7 @@ def mel_logmag_and_IF_to_audio(mel_logmag: torch.Tensor, mel_IF: torch.Tensor,
         mel_logmag, mel_IF,
         lower_edge_hertz=lower_edge_hertz,
         upper_edge_hertz=upper_edge_hertz,
-        mel_break_frequency_hertz=mel_break_frequency_hertz,
-        mel_high_frequency_q=mel_high_frequency_q)
+        mel_break_frequency_hertz=mel_break_frequency_hertz)
 
     # replicate the last frequency band
     # emulates the previously dropped Nyquist frequency, as advocated
