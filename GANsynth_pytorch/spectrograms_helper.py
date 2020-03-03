@@ -188,11 +188,22 @@ def logmag_and_IF_to_audio(logmag: torch.Tensor, IF: torch.Tensor,
 
 
 def mel_logmag_and_IF_to_audio(mel_logmag: torch.Tensor, mel_IF: torch.Tensor,
-                               hop_length: int, n_fft: int
+                               hop_length: int, n_fft: int,
+                               lower_edge_hertz: float = 0.0,
+                               upper_edge_hertz: float = 16000 / 2.0,
+                               mel_break_frequency_hertz: float = (
+                                     spec_ops._MEL_BREAK_FREQUENCY_HERTZ),
+                               mel_high_frequency_q: float = (
+                                     spec_ops._MEL_HIGH_FREQUENCY_Q)
                                ) -> torch.Tensor:
     batch_dim, freq_dim, time_dim = 0, 1, 2
 
-    logmag, IF = melspecgrams_to_specgrams(mel_logmag, mel_IF)
+    logmag, IF = melspecgrams_to_specgrams(
+        mel_logmag, mel_IF,
+        lower_edge_hertz=lower_edge_hertz,
+        upper_edge_hertz=upper_edge_hertz,
+        mel_break_frequency_hertz=mel_break_frequency_hertz,
+        mel_high_frequency_q=mel_high_frequency_q)
 
     # replicate the last frequency band
     # emulates the previously dropped Nyquist frequency, as advocated

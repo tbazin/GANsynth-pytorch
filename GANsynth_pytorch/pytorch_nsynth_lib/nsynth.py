@@ -22,6 +22,7 @@ import torchvision.transforms as transforms
 from sklearn.preprocessing import LabelEncoder
 from .. import phase_operation
 from .. import spectrograms_helper as spec_helper
+from .. import spec_ops
 import functools
 
 from typing import Tuple, Optional, List, Union, Iterable, Callable
@@ -169,7 +170,13 @@ def expand(t: torch.Tensor) -> torch.Tensor:
 
 
 def get_spectrogram_and_IF(sample: torch.Tensor, n_fft: int = 2048,
-                           hop_length: int = 512, use_mel_scale: bool = True
+                           hop_length: int = 512, use_mel_scale: bool = True,
+                           lower_edge_hertz: float = 0.0,
+                           upper_edge_hertz: float = 16000 / 2.0,
+                           mel_break_frequency_hertz: float = (
+                               spec_ops._MEL_BREAK_FREQUENCY_HERTZ),
+                           mel_high_frequency_q: float = (
+                               spec_ops._MEL_HIGH_FREQUENCY_Q),
                            ) -> Tuple[torch.Tensor, torch.Tensor]:
     if sample.ndim == 1:
         sample = sample.unsqueeze(0)
@@ -194,7 +201,11 @@ def get_spectrogram_and_IF(sample: torch.Tensor, n_fft: int = 2048,
 
     if use_mel_scale:
         mel_logmagnitude, mel_IF = spec_helper.specgrams_to_melspecgrams(
-            logmagnitude, IF)
+            logmagnitude, IF,
+            lower_edge_hertz=lower_edge_hertz,
+            upper_edge_hertz=upper_edge_hertz,
+            mel_break_frequency_hertz=mel_break_frequency_hertz,
+            mel_high_frequency_q=mel_high_frequency_q)
         return mel_logmagnitude, mel_IF
     else:
         return logmagnitude, IF
@@ -210,11 +221,23 @@ def channels_to_image(channels: Iterable[torch.Tensor]):
 
 def to_spec_and_IF_image(sample: torch.Tensor, n_fft: int = 2048,
                          hop_length: int = 512,
-                         use_mel_scale: bool = True) -> torch.Tensor:
+                         use_mel_scale: bool = True,
+                         lower_edge_hertz: float = 0.0,
+                         upper_edge_hertz: float = 16000 / 2.0,
+                         mel_break_frequency_hertz: float = (
+                             spec_ops._MEL_BREAK_FREQUENCY_HERTZ),
+                         mel_high_frequency_q: float = (
+                             spec_ops._MEL_HIGH_FREQUENCY_Q),
+                         ) -> torch.Tensor:
     """Transforms wav samples to image-like mel-spectrograms [magnitude, IF]"""
     spec_and_IF = get_spectrogram_and_IF(
         sample, hop_length=hop_length, n_fft=n_fft,
-        use_mel_scale=use_mel_scale)
+        use_mel_scale=use_mel_scale,
+        lower_edge_hertz=lower_edge_hertz,
+        upper_edge_hertz=upper_edge_hertz,
+        mel_break_frequency_hertz=mel_break_frequency_hertz,
+        mel_high_frequency_q=mel_high_frequency_q
+        )
     spec_and_IF_as_image_tensor = channels_to_image(spec_and_IF)
     return spec_and_IF_as_image_tensor
 
@@ -241,7 +264,12 @@ class WavToSpectrogramDataLoader(torch.utils.data.DataLoader):
                  n_fft: int = 2048, hop_length: int = 512,
                  device: str = 'cpu',
                  transform: Optional[object] = None,
-                 use_mel_scale: bool = True
+                 use_mel_scale: bool = True,
+                 lower_edge_hertz: float = 0.0,
+                 upper_edge_hertz: float = 16000 / 2.0,
+                 mel_break_frequency_hertz: float = (
+                     spec_ops._MEL_BREAK_FREQUENCY_HERTZ),
+                 mel_high_frequency_q: float = spec_ops._MEL_HIGH_FREQUENCY_Q,
                  ):
         super().__init__(dataset, batch_size=batch_size,
                          shuffle=shuffle, sampler=sampler,
@@ -256,6 +284,11 @@ class WavToSpectrogramDataLoader(torch.utils.data.DataLoader):
         self.device = device
         self.transform = transform
         self.use_mel_scale = use_mel_scale
+        if self.use_mel_scale:
+            self.lower_edge_hertz = lower_edge_hertz
+            self.upper_edge_hertz = upper_edge_hertz
+            self.mel_break_frequency_hertz = mel_break_frequency_hertz
+            self.mel_high_frequency_q = mel_high_frequency_q
 
     @property
     def to_spec_and_IF_image_transform(self) -> transforms.Compose:
@@ -269,10 +302,15 @@ class WavToSpectrogramDataLoader(torch.utils.data.DataLoader):
                 return [wav] + targets
             my_transforms.append(to_device_collated)
 
-        to_image = functools.partial(to_spec_and_IF_image,
-                                     n_fft=self.n_fft,
-                                     hop_length=self.hop_length,
-                                     use_mel_scale=self.use_mel_scale)
+        to_image = functools.partial(
+            to_spec_and_IF_image,
+            n_fft=self.n_fft,
+            hop_length=self.hop_length,
+            use_mel_scale=self.use_mel_scale,
+            lower_edge_hertz=self.lower_edge_hertz,
+            upper_edge_hertz=self.upper_edge_hertz,
+            mel_break_frequency_hertz=self.mel_break_frequency_hertz,
+            mel_high_frequency_q=self.mel_high_frequency_q)
 
         def make_collated_transform(transform):
             def collated_transform(data_and_targets):
