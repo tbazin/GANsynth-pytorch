@@ -142,6 +142,8 @@ def specgrams_to_melspecgrams(magnitude: torch.Tensor, IF: torch.Tensor,
     mag2 = torch.exp(2.0 * logmag)
     phase_angle = torch.cumsum(p * np.pi, dim=time_dim)
 
+    if num_mel_bins is None:
+        num_mel_bins = num_freq_bins // mel_downscale
     linear_to_mel_np = spec_ops.linear_to_mel_weight_matrix(
         num_mel_bins, num_freq_bins, sample_rate, lower_edge_hertz,
         upper_edge_hertz, mel_break_frequency_hertz, mel_high_frequency_q)
