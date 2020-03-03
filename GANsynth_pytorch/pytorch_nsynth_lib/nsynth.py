@@ -200,7 +200,7 @@ def get_spectrogram_and_IF(sample: torch.Tensor, n_fft: int = 2048,
         return logmagnitude, IF
 
 
-def channels_to_image(channels: List[torch.Tensor]):
+def channels_to_image(channels: Iterable[torch.Tensor]):
     """Reshape data into nn.Conv2D-compatible image shape"""
     channel_dimension = 1
     return torch.cat([channel.float().unsqueeze(channel_dimension)
