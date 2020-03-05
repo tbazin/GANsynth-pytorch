@@ -18,7 +18,7 @@ import torch
 import torchaudio
 import torch.utils.data as data
 from torch.utils.data.sampler import Sampler
-import torchvision.transforms as transforms
+from torchvision import transforms
 from sklearn.preprocessing import LabelEncoder
 from .. import phase_operation
 from .. import spectrograms_helper as spec_helper
@@ -160,54 +160,6 @@ class NSynth(data.Dataset):
         return [sample, *categorical_target, metadata]
 
 
-def expand(t: torch.Tensor) -> torch.Tensor:
-    """"Repeat the last column of the input matrix twice"""
-    # FIXME uses a hardcoded value valid only
-    # for the duration of the NSynth samples
-    expand_vec = t.select(dim=2, index=125).unsqueeze(2)
-    expanded = torch.cat([t, expand_vec, expand_vec], dim=2)
-    return expanded
-
-
-def get_spectrogram_and_IF(sample: torch.Tensor, n_fft: int = 2048,
-                           hop_length: int = 512, use_mel_scale: bool = True,
-                           lower_edge_hertz: float = 0.0,
-                           upper_edge_hertz: float = 16000 / 2.0,
-                           mel_break_frequency_hertz: float = (
-                               spec_ops._MEL_BREAK_FREQUENCY_HERTZ),
-                           ) -> Tuple[torch.Tensor, torch.Tensor]:
-    if sample.ndim == 1:
-        sample = sample.unsqueeze(0)
-    window_np = scipy.signal.get_window('hann', n_fft)
-    window = torch.as_tensor(window_np).to(sample.device).to(sample.dtype)
-    spec = torch.stft(sample, n_fft=n_fft, hop_length=hop_length,
-                      window=window)
-
-    # trim-off Nyquist frequency as advocated by GANSynth
-    spec = spec[:, :-1]
-
-    magnitude, angle = torchaudio.functional.magphase(spec)
-
-    logmagnitude = torch.log(magnitude + 1.0e-6)
-
-    IF = phase_operation.instantaneous_frequency(
-        angle, time_axis=2)
-
-    logmagnitude = expand(logmagnitude)
-    IF = expand(IF)
-    # return logmagnitude, IF
-
-    if use_mel_scale:
-        mel_logmagnitude, mel_IF = spec_helper.specgrams_to_melspecgrams(
-            logmagnitude, IF,
-            lower_edge_hertz=lower_edge_hertz,
-            upper_edge_hertz=upper_edge_hertz,
-            mel_break_frequency_hertz=mel_break_frequency_hertz)
-        return mel_logmagnitude, mel_IF
-    else:
-        return logmagnitude, IF
-
-
 def channels_to_image(channels: Iterable[torch.Tensor]):
     """Reshape data into nn.Conv2D-compatible image shape"""
     channel_dimension = 1
@@ -218,19 +170,25 @@ def channels_to_image(channels: Iterable[torch.Tensor]):
 
 def to_spec_and_IF_image(sample: torch.Tensor, n_fft: int = 2048,
                          hop_length: int = 512,
+                         window_length: int = 2048,
                          use_mel_scale: bool = True,
                          lower_edge_hertz: float = 0.0,
                          upper_edge_hertz: float = 16000 / 2.0,
                          mel_break_frequency_hertz: float = (
                              spec_ops._MEL_BREAK_FREQUENCY_HERTZ),
+                         mel_downscale: int = 1,
+                         sample_rate: int = 16000,
+                         linear_to_mel: Optional[torch.Tensor] = None
                          ) -> torch.Tensor:
     """Transforms wav samples to image-like mel-spectrograms [magnitude, IF]"""
-    spec_and_IF = get_spectrogram_and_IF(
+    spec_and_IF = spec_helper.get_spectrogram_and_IF(
         sample, hop_length=hop_length, n_fft=n_fft,
+        sample_rate=sample_rate,
         use_mel_scale=use_mel_scale,
         lower_edge_hertz=lower_edge_hertz,
         upper_edge_hertz=upper_edge_hertz,
         mel_break_frequency_hertz=mel_break_frequency_hertz,
+        linear_to_mel=linear_to_mel
         )
     spec_and_IF_as_image_tensor = channels_to_image(spec_and_IF)
     return spec_and_IF_as_image_tensor
@@ -255,14 +213,19 @@ class WavToSpectrogramDataLoader(torch.utils.data.DataLoader):
                  timeout: float = 0,
                  worker_init_fn: Callable[[int], None] = None,
                  multiprocessing_context=None,
-                 n_fft: int = 2048, hop_length: int = 512,
+                 n_fft: int = 2048,
+                 window_length: Optional[int] = None,
+                 hop_length: int = 512,
                  device: str = 'cpu',
                  transform: Optional[object] = None,
+                 fs_hz: int = 16000,
                  use_mel_scale: bool = True,
                  lower_edge_hertz: float = 0.0,
                  upper_edge_hertz: float = 16000 / 2.0,
                  mel_break_frequency_hertz: float = (
                      spec_ops._MEL_BREAK_FREQUENCY_HERTZ),
+                 mel_downscale: int = 1,
+                 expand_resolution_factor: float = 1.5,
                  ):
         super().__init__(dataset, batch_size=batch_size,
                          shuffle=shuffle, sampler=sampler,
@@ -273,14 +236,72 @@ class WavToSpectrogramDataLoader(torch.utils.data.DataLoader):
                          worker_init_fn=worker_init_fn,
                          multiprocessing_context=multiprocessing_context)
         self.n_fft = n_fft
+        self.fs_hz = fs_hz
         self.hop_length = hop_length
+        window_length = window_length
+        if window_length is None:
+            window_length = n_fft
+        self.window_length = window_length
         self.device = device
         self.transform = transform
         self.use_mel_scale = use_mel_scale
+
+        self.lower_edge_hertz = None
+        self.upper_edge_hertz = None
+        self.mel_break_frequency_hertz = None
+        self.mel_downscale = None
+        self.linear_to_mel = None
         if self.use_mel_scale:
             self.lower_edge_hertz = lower_edge_hertz
             self.upper_edge_hertz = upper_edge_hertz
             self.mel_break_frequency_hertz = mel_break_frequency_hertz
+            self.mel_downscale = mel_downscale
+            self.expand_resolution_factor = expand_resolution_factor
+            self.linear_to_mel = self.precompute_linear_to_mel()
+
+    def precompute_linear_to_mel(self) -> torch.Tensor:
+        assert self.use_mel_scale
+        assert isinstance(self.mel_downscale, int)
+        assert isinstance(self.mel_break_frequency_hertz, (int, float))
+        assert isinstance(self.lower_edge_hertz, (int, float))
+        assert isinstance(self.upper_edge_hertz, (int, float))
+
+        num_freq_bins = self.n_fft // 2
+        num_mel_bins = num_freq_bins // self.mel_downscale
+
+        linear_to_mel_np = spec_ops.linear_to_mel_weight_matrix(
+            num_mel_bins=num_mel_bins, num_spectrogram_bins=num_freq_bins,
+            sample_rate=self.fs_hz,
+            lower_edge_hertz=self.lower_edge_hertz,
+            upper_edge_hertz=self.upper_edge_hertz,
+            mel_break_frequency_hertz=self.mel_break_frequency_hertz,
+            expand_resolution_factor=self.expand_resolution_factor)
+        return torch.from_numpy(linear_to_mel_np).to(self.device)
+
+    def to_spectrogram(self, audio: torch.Tensor) -> torch.Tensor:
+        return to_spec_and_IF_image(
+            audio,
+            n_fft=self.n_fft, hop_length=self.hop_length,
+            window_length=self.window_length,
+            use_mel_scale=self.use_mel_scale,
+            linear_to_mel=self.linear_to_mel)
+
+    def to_audio(self, spectrogram: torch.Tensor) -> torch.Tensor:
+        if self.use_mel_scale:
+            mel_logmag, mel_IF = self.split_spectrogram(spectrogram)
+            return spec_helper.mel_logmag_and_IF_to_audio(
+                mel_logmag, mel_IF,
+                n_fft=self.n_fft, hop_length=self.hop_length,
+                window_length=self.window_length,
+                linear_to_mel=self.linear_to_mel
+            )
+        else:
+            logmag, IF = self.split_spectrogram(spectrogram)
+            return spec_helper.logmag_and_IF_to_audio(
+                logmag, IF,
+                n_fft=self.n_fft, hop_length=self.hop_length,
+                window_length=self.window_length
+            )
 
     @property
     def to_spec_and_IF_image_transform(self) -> transforms.Compose:
@@ -294,14 +315,7 @@ class WavToSpectrogramDataLoader(torch.utils.data.DataLoader):
                 return [wav] + targets
             my_transforms.append(to_device_collated)
 
-        to_image = functools.partial(
-            to_spec_and_IF_image,
-            n_fft=self.n_fft,
-            hop_length=self.hop_length,
-            use_mel_scale=self.use_mel_scale,
-            lower_edge_hertz=self.lower_edge_hertz,
-            upper_edge_hertz=self.upper_edge_hertz,
-            mel_break_frequency_hertz=self.mel_break_frequency_hertz)
+        to_image = self.to_spectrogram
 
         def make_collated_transform(transform):
             def collated_transform(data_and_targets):
@@ -322,58 +336,32 @@ class WavToSpectrogramDataLoader(torch.utils.data.DataLoader):
         return map(self.to_spec_and_IF_image_transform,
                    wavforms_iterator)
 
+    @staticmethod
+    def split_spectrogram(spec_and_IF: torch.Tensor) -> Tuple[torch.Tensor,
+                                                              torch.Tensor]:
+        assert spec_and_IF.ndim == 4, "input is expected to be batched"
+        channel_dim = 1
+        logmag = spec_and_IF.select(channel_dim, 0)
+        IF = spec_and_IF.select(channel_dim, 1)
+        return logmag, IF
 
-def wavfile_to_spec_and_IF(audio_path: pathlib.Path,
-                           target_fs_hz: int = 16000,
-                           duration_s: float = 4,
-                           to_mono: bool = True,
-                           zero_pad: bool = True,
-                           use_mel_scale: bool = True
-                           ) -> torch.Tensor:
-    """Load and convert a single audio file"""
-    sample_audio, fs_hz = torchaudio.load_wav(audio_path,
-                                              channels_first=True)
-
-    # resample to target sampling frequency
-    if not fs_hz == target_fs_hz:
-        resampler = torchaudio.transforms.Resample(
-            orig_freq=fs_hz, new_freq=target_fs_hz)
-        sample_audio = resampler(sample_audio.cuda())
-
-    if to_mono:
-        sample_audio = sample_audio.sum(0)
-
-    # trim from beginning for the selected duration
-    duration_n = int(duration_s * target_fs_hz)
-
-    if zero_pad:
-        sample_duration_n = sample_audio.shape[-1]
-        padding_amount_n = max(duration_n - sample_duration_n, 0)
-        sample_audio = torch.nn.functional.pad(sample_audio,
-                                               (0, padding_amount_n))
-
-    sample_audio = sample_audio[:duration_n]
-
-    toFloat = transforms.Lambda(lambda x: (x / np.iinfo(np.int16).max))
-    sample_audio = toFloat(sample_audio)
-    spec, IF = get_spectrogram_and_IF(
-        sample_audio, use_mel_scale=use_mel_scale)
-    channel_dim = 1
-    spec = spec.unsqueeze(channel_dim)
-    IF = IF.unsqueeze(channel_dim)
-    spec_and_IF = torch.cat([spec,
-                             IF],
-                            dim=channel_dim)
-    return spec_and_IF
+    @staticmethod
+    def merge_spec_and_IF(logmag: torch.Tensor, IF: torch.Tensor
+                          ) -> torch.Tensor:
+        assert logmag.ndim == IF.ndim == 3, "input is expected to be batched"
+        channel_dim = 1
+        logmag = logmag.unsqueeze(channel_dim)
+        IF = IF.unsqueeze(channel_dim)
+        return torch.cat([logmag, IF], dim=1)
 
 
 def mask_phase(spec_and_IF: torch.Tensor,
                threshold: float = -13,  # TODO(theis) define a proper threshold
                min_value_spec: float = spec_helper.SPEC_THRESHOLD):
     """
-    20200117(theis): threshold set at -13~~log(2e-6) since the
-    spectrograms returned by the NSynth dataset have minimum amplitude
-    spec_helpers.SPEC_THRESHOLD = log(1e-6)
+    2020/01/17(theis): threshold set at -13~~log(2e-6) since the
+    spectrograms returned by the NSynth dataset have minimum amplitude:
+        spec_helpers.SPEC_THRESHOLD = log(1e-6)
     """
     if spec_and_IF.ndim == 3:
         channel_dim = 0
