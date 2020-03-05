@@ -151,7 +151,6 @@ def linear_to_mel_weight_matrix(num_mel_bins: int = 20,
 
     # Intersect the line segments with each other and zero.
     mel_weights_matrix = np.maximum(0.0, np.minimum(lower_slopes, upper_slopes))
-    print(mel_weights_matrix.shape)
 
     # Re-add the zeroed lower bins we sliced out above.
     # [freq, mel]
