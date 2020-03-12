@@ -13,12 +13,12 @@ DatasetElement = Tuple[torch.Tensor, Iterable[Any]]
 
 class WavToSpectrogramDataLoader(torch.utils.data.DataLoader):
     def __init__(self, dataset: Dataset,
-                 spectrogramsHelper: SpectrogramsHelper,
+                 spectrograms_helper: SpectrogramsHelper,
                  transform=transforms.Lambda(lambda x: x),
                  **kwargs,
                  ):
         super().__init__(dataset, **kwargs)
-        self.spectrogramsHelper = spectrogramsHelper
+        self.spectrograms_helper = spectrograms_helper
         self.transform = transform
 
         self._transforms = transforms.Compose(
@@ -44,8 +44,8 @@ class WavToSpectrogramDataLoader(torch.utils.data.DataLoader):
     def _collated_to_spectrogram_transform(self) -> transforms.Compose:
         """Efficient audio-to-spectrogram conversion using CUDA if available"""
         def to_spectrogram_ondevice(audio: torch.Tensor):
-            return self.spectrogramsHelper.to_spectrogram(audio.to(
-                self.spectrogramsHelper.device))
+            return self.spectrograms_helper.to_spectrogram(audio.to(
+                self.spectrograms_helper.device))
 
         return self._make_collated_transform(to_spectrogram_ondevice)
 
@@ -87,12 +87,12 @@ def make_masked_phase_transform(min_magnitude: float):
 
 class MaskedPhaseWavToSpectrogramDataLoader(WavToSpectrogramDataLoader):
     def __init__(self, dataset: Dataset,
-                 spectrogramsHelper: SpectrogramsHelper,
+                 spectrograms_helper: SpectrogramsHelper,
                  **kwargs,
                  ):
         threshold_phase_transform = make_masked_phase_transform(
-            spectrogramsHelper.safelog_eps)
+            spectrograms_helper.safelog_eps)
 
-        super().__init__(dataset, spectrogramsHelper,
+        super().__init__(dataset, spectrograms_helper,
                          transform=threshold_phase_transform,
                          **kwargs)
