@@ -76,14 +76,20 @@ def mask_phase(logmag_and_IF: torch.Tensor, min_magnitude: float):
     return logmag_and_IF
 
 
+def make_masked_phase_transform(min_magnitude: float):
+    """Return a Torchvision-style transform for low-magnitude phase-masking"""
+    return transforms.Lambda(functools.partial(
+        mask_phase, min_magnitude=min_magnitude))
+
+
 class MaskedPhaseWavToSpectrogramDataLoader(WavToSpectrogramDataLoader):
     def __init__(self, spectrogramsHelper: SpectrogramsHelper,
                  threshold: float = -13,
                  device: str = 'cpu',
                  **kwargs,
                  ):
-        threshold_phase_transform = transforms.Lambda(
-            functools.partial(mask_phase, spectrogramsHelper.safelog_eps))
+        threshold_phase_transform = make_masked_phase_transform(
+            spectrogramsHelper.safelog_eps)
         super().__init__(spectrogramsHelper,
                          device=device,
                          transform=threshold_phase_transform,
