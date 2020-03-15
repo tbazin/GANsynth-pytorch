@@ -27,10 +27,11 @@ class SpectrogramsHelper(nn.Module):
         self.n_fft = n_fft
         self.hop_length = hop_length
         self.window_length = window_length or self.n_fft
+        self.device = device
 
         self.window = nn.Parameter(
             torch.hann_window(self.window_length, periodic=False),
-            requires_grad=False)
+            requires_grad=False).to(self.device)
 
         self.safelog_eps = safelog_eps
 
@@ -43,28 +44,52 @@ class SpectrogramsHelper(nn.Module):
         return expanded
 
     @staticmethod
-    def _split_channels(spec_and_IF: torch.Tensor) -> Tuple[torch.Tensor,
-                                                            torch.Tensor]:
-        assert spec_and_IF.ndim == 4, "input is expected to be batched"
+    def _split_channels(magnitude_and_IF: torch.Tensor) -> Tuple[torch.Tensor,
+                                                                 torch.Tensor]:
+        """Split magnitude and Instantaneous Frequency tensors in image shape
+
+        The converse of SpectrogramsHelper._merge_channels()
+        """
+        assert magnitude_and_IF.ndim == 4, (
+            "Input is expected to be batched")
         channel_dim = 1
-        logmag = spec_and_IF.select(channel_dim, 0)
-        IF = spec_and_IF.select(channel_dim, 1)
-        return logmag, IF
+        magnitude = magnitude_and_IF.select(channel_dim, 0)
+        IF = magnitude_and_IF.select(channel_dim, 1)
+        return magnitude, IF
 
     @staticmethod
-    def _merge_channels(logmag: torch.Tensor, IF: torch.Tensor
+    def _merge_channels(magnitude: torch.Tensor, IF: torch.Tensor
                         ) -> torch.Tensor:
-        assert logmag.ndim == IF.ndim == 3, "input is expected to be batched"
+        """Join magnitude and Instantaneous Frequency tensors for use as images
+
+        Joins the two input time-frequency representation along dimension
+        1 to be considered as channels of a single 2D image by nn.Conv2D
+        """
+        assert magnitude.ndim == IF.ndim == 3, (
+            "Input is expected to be batched")
         channel_dim = 1
-        logmag = logmag.unsqueeze(channel_dim)
+        magnitude = magnitude.unsqueeze(channel_dim)
         IF = IF.unsqueeze(channel_dim)
-        return torch.cat([logmag, IF], dim=1)
+        return torch.cat([magnitude, IF], dim=1)
 
     def _stft(self, sample: torch.Tensor) -> torch.Tensor:
+        """Helper function for computing the STFT
+
+        Arguments:
+            sampler, torch.Tensor, shape [batch, duration]:
+                a batch of audio samples
+        Return:
+            torch.Tensor, shape [batch, self.n_fft//2 + 1, num_windows, 2]:
+                the magnitude and Instantaneous Frequency of the input
+        """
         return torch.stft(sample, n_fft=self.n_fft, hop_length=self.hop_length,
                           window=self.window, win_length=self.window_length)
 
     def _istft(self, stft: torch.Tensor) -> torch.Tensor:
+        """Helper function for computing the iSTFT
+
+        Argument and output are the converse of self._stft()
+        """
         return torchaudio.functional.istft(
             stft, n_fft=self.n_fft, hop_length=self.hop_length,
             window=self.window, win_length=self.window_length)
@@ -73,6 +98,7 @@ class SpectrogramsHelper(nn.Module):
         if audio.ndim == 1:
             audio = audio.unsqueeze(0)
 
+        # shape [batch, self.n_fft//2 + 1, num_windows, 2]
         spec = self._stft(audio)
 
         # trim-off Nyquist frequency as advocated by GANSynth
@@ -82,8 +108,7 @@ class SpectrogramsHelper(nn.Module):
 
         logmagnitude = torch.log(magnitude + self.safelog_eps)
 
-        IF = phase_op.instantaneous_frequency(
-            angle, time_axis=2)
+        IF = phase_op.instantaneous_frequency(angle, time_axis=2)
 
         logmagnitude = self._expand(logmagnitude)
         IF = self._expand(IF)
@@ -173,7 +198,8 @@ class MelSpectrogramsHelper(SpectrogramsHelper):
         self.num_mel_bins = num_mel_bins or self.num_freq_bins // mel_downscale
 
         # initialize the linear-to-mel conversion matrix
-        self._linear_to_mel_matrix = self.precompute_linear_to_mel()
+        self._linear_to_mel_matrix = self.precompute_linear_to_mel().to(
+            self.device)
 
     def precompute_linear_to_mel(self) -> torch.Tensor:
         linear_to_mel_np = spec_ops.linear_to_mel_weight_matrix(
@@ -227,12 +253,12 @@ class MelSpectrogramsHelper(SpectrogramsHelper):
         freq_dim, time_dim = time_dim, freq_dim
 
         logmag, IF = self._split_channels(spectrogram)
-        freq_dim, time_dim = freq_dim - 1, time_dim - 1
+        freq_dim, time_dim = freq_dim-1, time_dim-1
         channel_dim = None
 
         mag2 = torch.exp(2.0 * logmag)
 
-        # retrieve the phase angle for conversion, re-roll IF
+        # retrieve the phase angle for conversion, unroll IF
         phase_angle = torch.cumsum(IF * np.pi, dim=time_dim)
 
         linear_to_mel_matrix = (self.linear_to_mel_matrix
@@ -246,7 +272,7 @@ class MelSpectrogramsHelper(SpectrogramsHelper):
                                                   time_axis=time_dim)
 
         mel_spectrogram = self._merge_channels(logmelmag2, mel_IF)
-        freq_dim, time_dim = freq_dim + 1, time_dim + 1
+        freq_dim, time_dim = freq_dim+1, time_dim+1
         channel_dim = 1
 
         # transpose-back to [batch, freq, time] shape
@@ -272,7 +298,7 @@ class MelSpectrogramsHelper(SpectrogramsHelper):
 
         logmelmag2, mel_IF = self._split_channels(mel_spectrogram)
         channel_dim = None
-        freq_dim, time_dim = freq_dim - 1, time_dim - 1
+        freq_dim, time_dim = freq_dim-1, time_dim-1
 
         mel_to_linear_matrix = (self.mel_to_linear_matrix
                                 .to(logmelmag2.device)
@@ -289,7 +315,7 @@ class MelSpectrogramsHelper(SpectrogramsHelper):
         IF = phase_op.instantaneous_frequency(phase_angle, time_axis=time_dim)
 
         spectrogram = self._merge_channels(logmag, IF)
-        freq_dim, time_dim = freq_dim + 1, time_dim + 1
+        freq_dim, time_dim = freq_dim+1, time_dim+1
         channel_dim = 1
 
         # transpose back to original time and frequency dimensions

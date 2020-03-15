@@ -3,6 +3,7 @@ from typing import Tuple, Callable, Any, Iterable
 import functools
 
 import torch
+from torch.utils.data import Dataset
 from torchvision import transforms
 
 from .spectrograms_helper import SpectrogramsHelper
@@ -11,12 +12,13 @@ DatasetElement = Tuple[torch.Tensor, Iterable[Any]]
 
 
 class WavToSpectrogramDataLoader(torch.utils.data.DataLoader):
-    def __init__(self, spectrogramsHelper: SpectrogramsHelper,
+    def __init__(self, dataset: Dataset,
+                 spectrograms_helper: SpectrogramsHelper,
                  transform=transforms.Lambda(lambda x: x),
                  **kwargs,
                  ):
-        super().__init__(**kwargs)
-        self.spectrogramsHelper = spectrogramsHelper
+        super().__init__(dataset, **kwargs)
+        self.spectrograms_helper = spectrograms_helper
         self.transform = transform
 
         self._transforms = transforms.Compose(
@@ -34,14 +36,16 @@ class WavToSpectrogramDataLoader(torch.utils.data.DataLoader):
             x = x_and_targets[0]
             x = transform(x)
             targets = x_and_targets[1:]
-            return (x,) + targets
+            return [x] + targets
+
+        return collated_transform
 
     @property
     def _collated_to_spectrogram_transform(self) -> transforms.Compose:
         """Efficient audio-to-spectrogram conversion using CUDA if available"""
         def to_spectrogram_ondevice(audio: torch.Tensor):
-            return self.spectrogramsHelper.to_spectrogram(audio.to(
-                self.spectrogramsHelper.device))
+            return self.spectrograms_helper.to_spectrogram(audio.to(
+                self.spectrograms_helper.device))
 
         return self._make_collated_transform(to_spectrogram_ondevice)
 
@@ -50,22 +54,22 @@ class WavToSpectrogramDataLoader(torch.utils.data.DataLoader):
         return map(self._transforms, wavforms_iterator)
 
 
-def mask_phase(logmag_and_IF: torch.Tensor, min_magnitude: float):
+def mask_phase(spectrogram: torch.Tensor, min_magnitude: float):
     """Set IF to 0 where
 
     2020/01/17(theis): threshold set at -13~~log(2e-6) since the
     spectrograms returned by the NSynth dataset have minimum amplitude:
         spec_helpers.SPEC_THRESHOLD = log(1e-6)
     """
-    if logmag_and_IF.ndim == 3:
+    if spectrogram.ndim == 3:
         channel_dim = 0
-    elif logmag_and_IF.ndim == 4:
+    elif spectrogram.ndim == 4:
         channel_dim = 1
     else:
         raise ValueError(
-            f"Incorrect shape {logmag_and_IF.shape} for parameter spec_and_IF")
-    logmag = logmag_and_IF.select(channel_dim, 0)
-    IF = logmag_and_IF.select(channel_dim, 1)
+            f"Incorrect shape {spectrogram.shape} for parameter spec_and_IF")
+    logmag = spectrogram.select(channel_dim, 0)
+    IF = spectrogram.select(channel_dim, 1)
 
     log_threshold = np.log(2 * min_magnitude)
     mask = logmag < log_threshold
@@ -73,7 +77,12 @@ def mask_phase(logmag_and_IF: torch.Tensor, min_magnitude: float):
     logmag_fill_value = np.log(min_magnitude)
     logmag.masked_fill_(mask, logmag_fill_value)
     IF.masked_fill_(mask, 0)
-    return logmag_and_IF
+    return spectrogram
+
+
+def make_masked_phase_transform(min_magnitude: float):
+    return transforms.Lambda(functools.partial(
+        mask_phase, min_magnitude=min_magnitude))
 
 
 def make_masked_phase_transform(min_magnitude: float):
@@ -83,17 +92,13 @@ def make_masked_phase_transform(min_magnitude: float):
 
 
 class MaskedPhaseWavToSpectrogramDataLoader(WavToSpectrogramDataLoader):
-    def __init__(self, spectrogramsHelper: SpectrogramsHelper,
-                 threshold: float = -13,
-                 device: str = 'cpu',
+    def __init__(self, dataset: Dataset,
+                 spectrograms_helper: SpectrogramsHelper,
                  **kwargs,
                  ):
         threshold_phase_transform = make_masked_phase_transform(
-            spectrogramsHelper.safelog_eps)
-        super().__init__(spectrogramsHelper,
-                         device=device,
+            spectrograms_helper.safelog_eps)
+
+        super().__init__(dataset, spectrograms_helper,
                          transform=threshold_phase_transform,
                          **kwargs)
-        self.device = device
-        self.spectrogramsHelper = spectrogramsHelper
-        self.transform = threshold_phase_transform

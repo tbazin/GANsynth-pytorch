@@ -1,4 +1,5 @@
 from typing import Iterable, Union
+import warnings
 import numpy as np
 
 # mel spectrum constants.
@@ -117,7 +118,6 @@ def linear_to_mel_weight_matrix(num_mel_bins: int = 20,
     center_mel = band_edges_mel[1:-1].copy()
     upper_edge_mel = band_edges_mel[2:].copy()
 
-    # TODO(theis): remove this False, DEBUG
     if expand_resolution_factor > 1.:
         freq_res = nyquist_hertz / float(num_spectrogram_bins)
         freq_th = expand_resolution_factor * freq_res
@@ -148,6 +148,10 @@ def linear_to_mel_weight_matrix(num_mel_bins: int = 20,
             center_mel - lower_edge_mel)
         upper_slopes = (upper_edge_mel - spectrogram_bins_mel) / (
             upper_edge_mel - center_mel)
+
+    # check if all filters are non-empty
+    if not np.all(upper_edge_mel - lower_edge_mel > 0):
+        warnings.warn("Some filters are empty")
 
     # Intersect the line segments with each other and zero.
     mel_weights_matrix = np.maximum(0.0, np.minimum(lower_slopes, upper_slopes))
