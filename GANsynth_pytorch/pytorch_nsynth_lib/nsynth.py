@@ -1,8 +1,8 @@
 """
 File: nsynth.py
-Author: Kwon-Young Choi
-Email: kwon-young.choi@hotmail.fr
-Date: 2018-11-13
+Authors: Théis Bazin, Kwon-Young Choi
+Email: tbazin@github.com, kwon-young.choi@hotmail.fr
+Date: 2019-12, 2018-11-13
 Description: Load NSynth dataset using pytorch Dataset.
 If you want to modify the output of the dataset, use the transform
 and target_transform callbacks as ususal.
@@ -12,20 +12,13 @@ import pathlib
 import json
 import glob
 import numpy as np
-import scipy.signal
 
-import torch
 import torchaudio
 import torch.utils.data as data
-from torch.utils.data.sampler import Sampler
 from torchvision import transforms
 from sklearn.preprocessing import LabelEncoder
-from .. import phase_operation
-from .. import spectrograms_helper as spec_helper
-from .. import spec_ops
-import functools
 
-from typing import Tuple, Optional, List, Union, Iterable, Callable
+from typing import Tuple, Optional, List, Union, Iterable
 
 
 class NSynth(data.Dataset):
