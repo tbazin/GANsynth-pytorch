@@ -158,11 +158,3 @@ class NSynth(data.Dataset):
         if sample.ndim == 4:
             sample = sample.squeeze(0)
         return [sample, *categorical_target, metadata]
-
-
-def channels_to_image(channels: Iterable[torch.Tensor]):
-    """Reshape data into nn.Conv2D-compatible image shape"""
-    channel_dimension = 1
-    return torch.cat([channel.float().unsqueeze(channel_dimension)
-                      for channel in channels],
-                     dim=channel_dimension)
