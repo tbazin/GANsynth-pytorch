@@ -81,11 +81,6 @@ def mask_phase(spectrogram: torch.Tensor, min_magnitude: float):
 
 
 def make_masked_phase_transform(min_magnitude: float):
-    return transforms.Lambda(functools.partial(
-        mask_phase, min_magnitude=min_magnitude))
-
-
-def make_masked_phase_transform(min_magnitude: float):
     """Return a Torchvision-style transform for low-magnitude phase-masking"""
     return transforms.Lambda(functools.partial(
         mask_phase, min_magnitude=min_magnitude))
