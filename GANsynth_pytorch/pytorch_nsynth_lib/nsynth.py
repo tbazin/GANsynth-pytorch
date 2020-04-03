@@ -18,7 +18,7 @@ import torch.utils.data as data
 from torchvision import transforms
 from sklearn.preprocessing import LabelEncoder
 
-from typing import Tuple, Optional, List, Union, Iterable
+from typing import Tuple, Optional, List, Union, Iterable, Dict
 
 
 class NSynth(data.Dataset):
@@ -45,7 +45,9 @@ class NSynth(data.Dataset):
                  categorical_field_list=["instrument_family"],
                  valid_pitch_range: Optional[Tuple[int, int]] = None,
                  convert_to_float: bool = True,
-                 squeeze_mono_channel: bool = True):
+                 squeeze_mono_channel: bool = True,
+                 return_full_metadata: bool = True,
+                 label_encode_categorical_data: bool = True):
         """Constructor"""
         assert(isinstance(blacklist_pattern, list))
         assert(isinstance(categorical_field_list, list))
@@ -77,11 +79,14 @@ class NSynth(data.Dataset):
                 self.filenames, self.json_data, pattern)
 
         self.categorical_field_list = categorical_field_list
-        self.label_encoders = {}
-        for field in self.categorical_field_list:
-            self.label_encoders[field] = LabelEncoder()
-            field_values = [value[field] for value in self.json_data.values()]
-            self.label_encoders[field].fit(field_values)
+        self.label_encode_categorical_data = label_encode_categorical_data
+        self.label_encoders: Dict[str, LabelEncoder] = {}
+        if self.label_encode_categorical_data:
+            for field in self.categorical_field_list:
+                self.label_encoders[field] = LabelEncoder()
+                field_values = [value[field]
+                                for value in self.json_data.values()]
+                self.label_encoders[field].fit(field_values)
 
         self.squeeze_mono_channel = squeeze_mono_channel
         self.transform = transform or transforms.Lambda(lambda x: x)
@@ -94,6 +99,7 @@ class NSynth(data.Dataset):
             self.transform = transforms.Compose([toFloat,
                                                  self.transform])
         self.target_transform = target_transform
+        self.return_full_metadata = return_full_metadata
 
     def blacklist(self, filenames, json_data, pattern):
         filenames = [filename for filename in filenames
@@ -140,14 +146,24 @@ class NSynth(data.Dataset):
         sample, sample_rate = torchaudio.load_wav(name, channels_first=True)
         if self.squeeze_mono_channel:
             sample = sample.squeeze(0)
+
         metadata = self._get_metadata(name)
-        categorical_target = [
-            self.label_encoders[field].transform([metadata[field]])[0]
-            for field in self.categorical_field_list]
+        if self.label_encode_categorical_data:
+            categorical_target = [
+                self.label_encoders[field].transform([metadata[field]])[0]
+                for field in self.categorical_field_list]
+        else:
+            categorical_target = [metadata[field]
+                                  for field in self.categorical_field_list]
+
         if self.transform is not None:
             sample = self.transform(sample)
         if self.target_transform is not None:
             metadata = self.target_transform(metadata)
         if sample.ndim == 4:
             sample = sample.squeeze(0)
-        return [sample, *categorical_target, metadata]
+
+        if self.return_full_metadata:
+            return [sample, *categorical_target, metadata]
+        else:
+            return [sample, *categorical_target]
