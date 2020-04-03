@@ -1,0 +1,1 @@
+-e git://github.com/SonyCSLParis/pytorch-nsynth.git#egg=pytorch_nsynth
