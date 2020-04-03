@@ -2,7 +2,7 @@
 File: nsynth.py
 Authors: Théis Bazin, Kwon-Young Choi
 Email: tbazin@github.com, kwon-young.choi@hotmail.fr
-Date: 2019-12, 2018-11-13
+Date: 2019-2020, 2018-11-13
 Description: Load NSynth dataset using pytorch Dataset.
 If you want to modify the output of the dataset, use the transform
 and target_transform callbacks as ususal.
