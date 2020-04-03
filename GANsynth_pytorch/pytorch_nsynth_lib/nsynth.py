@@ -55,9 +55,9 @@ class NSynth(data.Dataset):
         self.filenames: List[str] = []
         # ensure audio_directory_paths is an iterable
         try:
-            _ = audio_directory_paths[0]
+            _ = audio_directory_paths[0]  # type: ignore
         except TypeError:
-            audio_directory_paths = [audio_directory_paths]
+            audio_directory_paths = [audio_directory_paths]  # type: ignore
         for audio_directory_path in audio_directory_paths:
             self.filenames.extend(sorted(
                 glob.glob(os.path.join(audio_directory_path, "*.wav"))
@@ -65,7 +65,8 @@ class NSynth(data.Dataset):
         with open(json_data_path, "r") as f:
             self.json_data = json.load(f)
 
-        # only keep filenames corresponding to files present in the split-describing metadata file
+        # only keep filenames corresponding to files present in the
+        # split-describing metadata file
         self._filter_filenames_in_json_data()
 
         # filter-out invalid pitches
