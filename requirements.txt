@@ -1,0 +1,9 @@
+torchaudio
+pytorch
+torchvision
+scikit-learn
+numpy
+pathlib
+librosa
+tqdm
+git://github.com/SonyCSLParis/pytorch-nsynth.git#egg=pytorch_nsynth
