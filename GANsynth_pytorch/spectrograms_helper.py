@@ -4,7 +4,7 @@ import pathlib
 import torch
 from torch import nn
 import torchaudio
-from typing import Tuple, Optional, Callable, Any, Iterable
+from typing import Tuple, Optional
 from torchvision import transforms
 
 import GANsynth_pytorch.spec_ops as spec_ops
