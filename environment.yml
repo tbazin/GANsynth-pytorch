@@ -1,0 +1,17 @@
+channels:
+    - pytorch
+    - conda-forge
+    - defaults
+
+dependencies:
+    - torchaudio
+    - pytorch
+    - torchvision
+    - scikit-learn
+    - numpy
+    - pathlib
+    - librosa
+    - tqdm
+    - pip
+    - pip:
+        - "-e git://github.com/SonyCSLParis/pytorch-nsynth.git#egg=pytorch_nsynth"
