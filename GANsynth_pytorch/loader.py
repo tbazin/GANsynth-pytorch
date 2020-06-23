@@ -74,8 +74,7 @@ def mask_phase(spectrogram: torch.Tensor, min_magnitude: float):
     log_threshold = np.log(2 * min_magnitude)
     mask = logmag < log_threshold
 
-    logmag_fill_value = np.log(min_magnitude)
-    logmag.masked_fill_(mask, logmag_fill_value)
+    logmag.masked_fill_(mask, log_threshold)
     IF.masked_fill_(mask, 0)
     return spectrogram
 
