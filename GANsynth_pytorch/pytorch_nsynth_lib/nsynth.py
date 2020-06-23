@@ -144,7 +144,7 @@ class NSynth(data.Dataset):
             tuple: (audio sample, *categorical targets, json_data)
         """
         name = self.filenames[index]
-        sample, sample_rate = torchaudio.load_wav(name, channels_first=True)
+        sample, sample_rate = torchaudio.load(name, channels_first=True)
         if self.squeeze_mono_channel:
             sample = sample.squeeze(0)
         metadata = self._get_metadata(name)

@@ -148,8 +148,7 @@ class SpectrogramsHelper(nn.Module):
                      zero_pad: bool = True,
                      ) -> torch.Tensor:
         """Load and convert a single audio file"""
-        audio, fs_hz = torchaudio.load_wav(audio_path,
-                                           channels_first=True)
+        audio, fs_hz = torchaudio.load(audio_path, channels_first=True)
         audio = audio.to(self.device)
 
         # resample to target sampling frequency
