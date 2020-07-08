@@ -143,7 +143,7 @@ class SpectrogramsHelper(nn.Module):
         return audio
 
     def from_wavfile(self, audio_path: pathlib.Path,
-                     duration_s: float = 4,
+                     duration_n: Optional[int] = None,
                      to_mono: bool = True,
                      zero_pad: bool = True,
                      ) -> torch.Tensor:
@@ -162,14 +162,13 @@ class SpectrogramsHelper(nn.Module):
             audio = audio.sum(0)
 
         # trim from beginning for the selected duration
-        duration_n = int(duration_s * self.fs_hz)
+        if duration_n is not None:
+            if zero_pad:
+                sample_duration_n = audio.shape[-1]
+                padding_amount_n = max(duration_n - sample_duration_n, 0)
+                audio = torch.nn.functional.pad(audio, (0, padding_amount_n))
 
-        if zero_pad:
-            sample_duration_n = audio.shape[-1]
-            padding_amount_n = max(duration_n - sample_duration_n, 0)
-            audio = torch.nn.functional.pad(audio, (0, padding_amount_n))
-
-        audio = audio[:duration_n]
+            audio = audio[:duration_n]
 
         toFloat = transforms.Lambda(lambda x: (x / np.iinfo(np.int16).max))
         audio = toFloat(audio)
