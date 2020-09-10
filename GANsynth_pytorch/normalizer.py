@@ -41,13 +41,12 @@ class DataNormalizer(object):
         self.a = torch.as_tensor(a).float()
         self.b = torch.as_tensor(b).float()
 
-
     def _init_range_normalizer(self, dataloader: DataLoader,
                                magnitude_margin: float, IF_margin: float):
-        min_spec = 10000
-        max_spec = -10000
-        min_IF = 10000
-        max_IF = -10000
+        min_spec = np.inf
+        max_spec = -np.inf
+        min_IF = np.inf
+        max_IF = -np.inf
 
         for batch_idx, (img, pitch) in enumerate(tqdm(dataloader)):
             spec = img.select(1, 0)
