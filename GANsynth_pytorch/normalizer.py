@@ -1,11 +1,11 @@
 from typing import Optional
-import collections
 import pathlib
 import json
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+
 
 class DataNormalizerStatistics(object):
     s_a: float
@@ -36,8 +36,10 @@ class DataNormalizer(object):
         print("Statistics:", self.statistics.__dict__)
 
         # pre-compute torch tensors
-        a = np.asarray([self.statistics.s_a, self.statistics.p_a])[None, :, None, None]
-        b = np.asarray([self.statistics.s_b, self.statistics.p_b])[None, :, None, None]
+        a = np.asarray([self.statistics.s_a, self.statistics.p_a])[
+            None, :, None, None]
+        b = np.asarray([self.statistics.s_b, self.statistics.p_b])[
+            None, :, None, None]
         self.a = torch.as_tensor(a).float()
         self.b = torch.as_tensor(b).float()
 
@@ -53,24 +55,22 @@ class DataNormalizer(object):
             IF = img.select(1, 1)
 
             if spec.min() < min_spec:
-                min_spec = spec.min()
+                min_spec = spec.min().cpu().item()
             if spec.max() > max_spec:
-                max_spec = spec.max()
+                max_spec = spec.max().cpu().item()
 
             if IF.min() < min_IF:
-                min_IF = IF.min()
+                min_IF = IF.min().cpu().item()
             if IF.max() > max_IF:
-                max_IF = IF.max()
+                max_IF = IF.max().cpu().item()
 
-        s_a = magnitude_margin * (2.0 / (max_spec - min_spec))
-        s_b = magnitude_margin * (-2.0 * min_spec / (max_spec - min_spec) - 1.0)
-        s_a = s_a.cpu().item()
-        s_b = s_b.cpu().item()
+        s_a = magnitude_margin * (2.0
+                                  / (max_spec - min_spec))
+        s_b = magnitude_margin * (-2.0 * min_spec / (max_spec - min_spec)
+                                  - 1.0)
 
         p_a = IF_margin * (2.0 / (max_IF - min_IF))
         p_b = IF_margin * (-2.0 * min_IF / (max_IF - min_IF) - 1.0)
-        p_a = p_a.cpu().item()
-        p_b = p_b.cpu().item()
 
         self.statistics = DataNormalizerStatistics(s_a, s_b, p_a, p_b)
 

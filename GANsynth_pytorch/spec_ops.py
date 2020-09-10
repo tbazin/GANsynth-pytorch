@@ -89,10 +89,11 @@ def linear_to_mel_weight_matrix(num_mel_bins: int = 20,
         raise ValueError('lower_edge_hertz %.1f >= upper_edge_hertz %.1f' %
                          (lower_edge_hertz, upper_edge_hertz))
     if upper_edge_hertz > sample_rate / 2:
-        raise ValueError('upper_edge_hertz must not be larger than the Nyquist '
-                         'frequency (sample_rate / 2). Got: %s for sample_rate: %s'
-                         % (upper_edge_hertz, sample_rate))
-    if expand_resolution_factor < 1. :
+        raise ValueError(
+            'upper_edge_hertz must not be larger than the Nyquist '
+            'frequency (sample_rate / 2). Got: %s for sample_rate: %s'
+            % (upper_edge_hertz, sample_rate))
+    if expand_resolution_factor < 1.:
         raise ValueError('Mel bin resolution factor %s should be >= 1.'
                          % (expand_resolution_factor))
 
@@ -154,10 +155,13 @@ def linear_to_mel_weight_matrix(num_mel_bins: int = 20,
         warnings.warn("Some filters are empty")
 
     # Intersect the line segments with each other and zero.
-    mel_weights_matrix = np.maximum(0.0, np.minimum(lower_slopes, upper_slopes))
+    mel_weights_matrix = np.maximum(0.0,
+                                    np.minimum(lower_slopes,
+                                               upper_slopes))
 
     # Re-add the zeroed lower bins we sliced out above.
     # [freq, mel]
-    mel_weights_matrix = np.pad(mel_weights_matrix, [[bands_to_zero, 0], [0, 0]],
+    mel_weights_matrix = np.pad(mel_weights_matrix,
+                                [[bands_to_zero, 0], [0, 0]],
                                 'constant')
     return mel_weights_matrix
