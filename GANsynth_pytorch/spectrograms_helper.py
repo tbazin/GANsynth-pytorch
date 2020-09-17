@@ -90,7 +90,7 @@ class SpectrogramsHelper(nn.Module):
 
         Argument and output are the converse of self._stft()
         """
-        return torchaudio.functional.istft(
+        return torch.istft(
             stft, n_fft=self.n_fft, hop_length=self.hop_length,
             window=self.window, win_length=self.window_length)
 
@@ -220,7 +220,9 @@ class MelSpectrogramsHelper(SpectrogramsHelper):
         m_t = self.linear_to_mel_matrix.T
         p = torch.matmul(self.linear_to_mel_matrix, m_t)
         sums = torch.sum(p, dim=0)
-        d = torch.where(torch.abs(sums).gt(1.e-8), 1.0/sums, sums)
+        d = torch.where(torch.abs(sums).gt(1.e-8),
+                        torch.div(torch.ones_like(sums), sums),
+                        sums)
         return torch.matmul(m_t, torch.diag(d))
 
     def to_spectrogram(self, audio_tensor: torch.Tensor) -> torch.Tensor:

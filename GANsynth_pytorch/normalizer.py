@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Union, Iterable
 import pathlib
 import json
 import numpy as np
@@ -50,7 +50,7 @@ class DataNormalizer(object):
         min_IF = np.inf
         max_IF = -np.inf
 
-        for batch_idx, (img, pitch) in enumerate(tqdm(dataloader)):
+        for batch_idx, (img, *_) in enumerate(tqdm(dataloader)):
             spec = img.select(1, 0)
             IF = img.select(1, 1)
 
