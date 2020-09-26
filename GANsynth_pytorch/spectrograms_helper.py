@@ -169,8 +169,6 @@ class SpectrogramsHelper(nn.Module):
 
             audio = audio[:duration_n]
 
-        toFloat = transforms.Lambda(lambda x: (x / np.iinfo(np.int16).max))
-        audio = toFloat(audio)
         return self.to_spectrogram(audio)
 
 
