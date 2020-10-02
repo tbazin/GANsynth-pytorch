@@ -3,6 +3,7 @@ import pathlib
 import json
 import numpy as np
 import torch
+from torch import nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -20,9 +21,11 @@ class DataNormalizerStatistics(object):
         self.p_b = p_b
 
 
-class DataNormalizer(object):
+class DataNormalizer(nn.Module):
     def __init__(self, statistics: Optional[DataNormalizerStatistics] = None,
                  dataloader: Optional[DataLoader] = None):
+        super().__init__()
+
         if statistics is not None:
             self.statistics = statistics
         elif dataloader is not None:
@@ -40,8 +43,10 @@ class DataNormalizer(object):
             None, :, None, None]
         b = np.asarray([self.statistics.s_b, self.statistics.p_b])[
             None, :, None, None]
-        self.a = torch.as_tensor(a).float()
-        self.b = torch.as_tensor(b).float()
+        self.a = nn.Parameter(torch.as_tensor(a).float(),
+                              requires_grad=False)
+        self.b = nn.Parameter(torch.as_tensor(b).float(),
+                              requires_grad=False)
 
     def _init_range_normalizer(self, dataloader: DataLoader,
                                magnitude_margin: float, IF_margin: float):
@@ -75,23 +80,10 @@ class DataNormalizer(object):
         self.statistics = DataNormalizerStatistics(s_a, s_b, p_a, p_b)
 
     def normalize(self, spec_and_IF: torch.Tensor):
-        device = spec_and_IF.device
-        a = self.a.to(device)
-        b = self.b.to(device)
-
-        spec_and_IF = spec_and_IF*a + b
-
-        return spec_and_IF
+        return spec_and_IF * self.a + self.b
 
     def denormalize(self, spec_and_IF: torch.Tensor):
-        device = spec_and_IF.device
-        a = self.a.to(device)
-        b = self.b.to(device)
-
-        spec_and_IF = (spec_and_IF - b) / a
-        # spec = (spec - self.s_b) / self.s_a
-        # IF = (IF - self.p_b) / self.p_a
-        return spec_and_IF
+        return (spec_and_IF - self.b) / self.a
 
     def dump_statistics(self, path: pathlib.Path):
         with path.open('w') as f:
