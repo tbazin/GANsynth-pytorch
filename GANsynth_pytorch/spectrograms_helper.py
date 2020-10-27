@@ -85,7 +85,8 @@ class SpectrogramsHelper(nn.Module):
                 the magnitude and Instantaneous Frequency of the input
         """
         return torch.stft(sample, n_fft=self.n_fft, hop_length=self.hop_length,
-                          window=self.window, win_length=self.window_length)
+                          window=self.window, win_length=self.window_length,
+                          return_complex=False)
 
     def _istft(self, stft: torch.Tensor) -> torch.Tensor:
         """Helper function for computing the iSTFT
@@ -94,7 +95,8 @@ class SpectrogramsHelper(nn.Module):
         """
         return torch.istft(
             stft, n_fft=self.n_fft, hop_length=self.hop_length,
-            window=self.window, win_length=self.window_length)
+            window=self.window, win_length=self.window_length,
+            return_complex=False)
 
     def to_spectrogram(self, audio: torch.Tensor) -> torch.Tensor:
         if audio.ndim == 1:
