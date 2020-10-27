@@ -19,7 +19,6 @@ class SpectrogramsHelper(nn.Module):
                  n_fft: int = 2048,
                  hop_length: int = 512,
                  window_length: Optional[int] = None,
-                 device: Optional[str] = 'cuda',
                  safelog_eps: float = 1e-6
                  ):
         super().__init__()
@@ -27,13 +26,16 @@ class SpectrogramsHelper(nn.Module):
         self.n_fft = n_fft
         self.hop_length = hop_length
         self.window_length = window_length or self.n_fft
-        self.device = device
 
         self.window = nn.Parameter(
             torch.hann_window(self.window_length, periodic=False),
-            requires_grad=False).to(self.device)
+            requires_grad=False)
 
         self.safelog_eps = safelog_eps
+
+    @property
+    def device(self):
+        return self.window.device
 
     def _expand(self, t: torch.Tensor) -> torch.Tensor:
         """"Repeat the last column of the input matrix twice"""
@@ -149,7 +151,7 @@ class SpectrogramsHelper(nn.Module):
                      ) -> torch.Tensor:
         """Load and convert a single audio file"""
         audio, fs_hz = torchaudio.load(audio_path, channels_first=True)
-        audio = audio.to(self.device)
+        audio = audio.to(self.window.device)
 
         # resample to target sampling frequency
         if not fs_hz == self.fs_hz:
@@ -194,8 +196,7 @@ class MelSpectrogramsHelper(SpectrogramsHelper):
         self.num_mel_bins = num_mel_bins or self.num_freq_bins // mel_downscale
 
         # initialize the linear-to-mel conversion matrix
-        self._linear_to_mel_matrix = self.precompute_linear_to_mel().to(
-            self.device)
+        self._linear_to_mel_matrix = self.precompute_linear_to_mel()
 
     def precompute_linear_to_mel(self) -> torch.Tensor:
         linear_to_mel_np = spec_ops.linear_to_mel_weight_matrix(
