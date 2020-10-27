@@ -11,6 +11,8 @@ import GANsynth_pytorch.spec_ops as spec_ops
 import GANsynth_pytorch.phase_operation as phase_op
 
 
+torchaudio.set_audio_backend('sox_io')
+
 # SPEC_THRESHOLD = 1e-6
 
 
