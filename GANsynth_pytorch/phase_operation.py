@@ -97,5 +97,8 @@ def polar2rect(mag: torch.Tensor, phase_angle: torch.Tensor) -> torch.Tensor:
 
     # broadcasting magnitude over dimension 0
     rectangular = (mag * phase_complex_form)
-    rectangular_complex_form = rectangular.permute(1, 2, 3, 0)
+    rectangular_complex_form = torch.view_as_complex(
+        rectangular
+        .permute(1, 2, 3, 0)
+        .contiguous())
     return rectangular_complex_form

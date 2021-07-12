@@ -88,7 +88,7 @@ class SpectrogramsHelper(nn.Module):
         """
         return torch.stft(sample, n_fft=self.n_fft, hop_length=self.hop_length,
                           window=self.window, win_length=self.window_length,
-                          return_complex=False)
+                          return_complex=True)
 
     def _istft(self, stft: torch.Tensor) -> torch.Tensor:
         """Helper function for computing the iSTFT
@@ -110,7 +110,7 @@ class SpectrogramsHelper(nn.Module):
         # trim-off Nyquist frequency as advocated by GANSynth
         spec = spec[:, :-1]
 
-        magnitude, angle = torchaudio.functional.magphase(spec)
+        magnitude, angle = spec.abs(), spec.angle()
 
         logmagnitude = torch.log(magnitude + self.safelog_eps)
 
