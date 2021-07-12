@@ -159,9 +159,9 @@ class SpectrogramsHelper(nn.Module):
 
         # resample to target sampling frequency
         if not fs_hz == self.fs_hz:
-            resampler = torchaudio.transforms.Resample(orig_freq=fs_hz,
-                                                       new_freq=self.fs_hz)
-            audio = resampler(audio)
+            audio = torchaudio.functional.resample(audio,
+                                                   orig_freq=fs_hz,
+                                                   new_freq=self.fs_hz)
 
         if to_mono:
             audio = audio.sum(0)
