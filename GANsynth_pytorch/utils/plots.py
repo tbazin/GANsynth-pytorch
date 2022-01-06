@@ -6,10 +6,13 @@ import functools
 
 def plot_mel_representations(log_melspec: np.ndarray, mel_IF: np.ndarray,
                              hop_length: int, fs_hz: int,
-                             ax_spec=None, ax_IF=None, print_title: bool = True
+                             ax_spec=None, ax_IF=None,
+                             print_title: bool = True,
+                             **kwargs
                              ) -> None:
     ax = ax_spec or plt.subplot(1, 2, 1)
-    librosa.display.specshow(log_melspec, sr=fs_hz, hop_length=hop_length, ax=ax)
+    librosa.display.specshow(log_melspec, sr=fs_hz, hop_length=hop_length,
+                             ax=ax, **kwargs)
     if print_title:
         if ax_spec is not None:
             ax.set_title("log-melspectrogram")
@@ -17,7 +20,8 @@ def plot_mel_representations(log_melspec: np.ndarray, mel_IF: np.ndarray,
             plt.title("log-melspectrogram")
 
     ax = ax_IF or plt.subplot(1, 2, 2)
-    librosa.display.specshow(mel_IF, sr=fs_hz, hop_length=hop_length, ax=ax)
+    librosa.display.specshow(mel_IF, sr=fs_hz, hop_length=hop_length, ax=ax,
+                             **kwargs)
     if print_title:
         if ax_IF is not None:
             ax.set_title("mel-IF")
@@ -31,7 +35,8 @@ def plot_mel_representations(log_melspec: np.ndarray, mel_IF: np.ndarray,
 
 def plot_mel_representations_batch(log_melspecs: np.ndarray,
                                    mel_IFs: np.ndarray,
-                                   hop_length: int, fs_hz: int):
+                                   hop_length: int, fs_hz: int,
+                                   **kwargs):
     # input data shape is [BATCH, FREQ, TIME]
     # with BATCH = 2*INPUT samples, containing originals and reconstructions
     num_samples = log_melspecs.shape[0] // 2
@@ -41,7 +46,8 @@ def plot_mel_representations_batch(log_melspecs: np.ndarray,
 
     make_plot = functools.partial(plot_mel_representations,
                                   hop_length=hop_length, fs_hz=fs_hz,
-                                  print_title=False)
+                                  print_title=False,
+                                  **kwargs)
 
     fig, axes = plt.subplots(num_rows, num_plots_per_row,
                              figsize=(num_samples*5, 6))

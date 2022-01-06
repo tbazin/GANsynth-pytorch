@@ -88,7 +88,8 @@ def polar2rect(mag: torch.Tensor, phase_angle: torch.Tensor) -> torch.Tensor:
     """Convert polar-form complex number to its rectangular form
 
     Complex tensors are shaped like [..., 2] in torchaudio's framework
-    with the last two dimensions being the real and imaginary parts"""
+    with the last two dimensions being the real and imaginary parts
+    """
     # add dummy complex dimension at dimension 0 for broadcasting to operate
     phase_angle = phase_angle.unsqueeze(0)
     phase_complex_form = torch.cat([torch.cos(phase_angle),
@@ -96,5 +97,8 @@ def polar2rect(mag: torch.Tensor, phase_angle: torch.Tensor) -> torch.Tensor:
 
     # broadcasting magnitude over dimension 0
     rectangular = (mag * phase_complex_form)
-    rectangular_complex_form = rectangular.permute(1, 2, 3, 0)
+    rectangular_complex_form = torch.view_as_complex(
+        rectangular
+        .permute(1, 2, 3, 0)
+        .contiguous())
     return rectangular_complex_form

@@ -11,6 +11,8 @@ import GANsynth_pytorch.spec_ops as spec_ops
 import GANsynth_pytorch.phase_operation as phase_op
 
 
+torchaudio.set_audio_backend('sox_io')
+
 # SPEC_THRESHOLD = 1e-6
 
 
@@ -19,7 +21,6 @@ class SpectrogramsHelper(nn.Module):
                  n_fft: int = 2048,
                  hop_length: int = 512,
                  window_length: Optional[int] = None,
-                 device: Optional[str] = 'cuda',
                  safelog_eps: float = 1e-6
                  ):
         super().__init__()
@@ -27,13 +28,16 @@ class SpectrogramsHelper(nn.Module):
         self.n_fft = n_fft
         self.hop_length = hop_length
         self.window_length = window_length or self.n_fft
-        self.device = device
 
         self.window = nn.Parameter(
             torch.hann_window(self.window_length, periodic=False),
-            requires_grad=False).to(self.device)
+            requires_grad=False)
 
         self.safelog_eps = safelog_eps
+
+    @property
+    def device(self):
+        return self.window.device
 
     def _expand(self, t: torch.Tensor) -> torch.Tensor:
         """"Repeat the last column of the input matrix twice"""
@@ -83,16 +87,18 @@ class SpectrogramsHelper(nn.Module):
                 the magnitude and Instantaneous Frequency of the input
         """
         return torch.stft(sample, n_fft=self.n_fft, hop_length=self.hop_length,
-                          window=self.window, win_length=self.window_length)
+                          window=self.window, win_length=self.window_length,
+                          return_complex=True)
 
     def _istft(self, stft: torch.Tensor) -> torch.Tensor:
         """Helper function for computing the iSTFT
 
         Argument and output are the converse of self._stft()
         """
-        return torchaudio.functional.istft(
+        return torch.istft(
             stft, n_fft=self.n_fft, hop_length=self.hop_length,
-            window=self.window, win_length=self.window_length)
+            window=self.window, win_length=self.window_length,
+            return_complex=False)
 
     def to_spectrogram(self, audio: torch.Tensor) -> torch.Tensor:
         if audio.ndim == 1:
@@ -104,7 +110,7 @@ class SpectrogramsHelper(nn.Module):
         # trim-off Nyquist frequency as advocated by GANSynth
         spec = spec[:, :-1]
 
-        magnitude, angle = torchaudio.functional.magphase(spec)
+        magnitude, angle = spec.abs(), spec.angle()
 
         logmagnitude = torch.log(magnitude + self.safelog_eps)
 
@@ -143,36 +149,32 @@ class SpectrogramsHelper(nn.Module):
         return audio
 
     def from_wavfile(self, audio_path: pathlib.Path,
-                     duration_s: float = 4,
+                     duration_n: Optional[int] = None,
                      to_mono: bool = True,
                      zero_pad: bool = True,
                      ) -> torch.Tensor:
         """Load and convert a single audio file"""
-        audio, fs_hz = torchaudio.load_wav(audio_path,
-                                           channels_first=True)
-        audio = audio.to(self.device)
+        audio, fs_hz = torchaudio.load(audio_path, channels_first=True)
+        audio = audio.to(self.window.device)
 
         # resample to target sampling frequency
         if not fs_hz == self.fs_hz:
-            resampler = torchaudio.transforms.Resample(orig_freq=fs_hz,
-                                                       new_freq=self.fs_hz)
-            audio = resampler(audio)
+            audio = torchaudio.functional.resample(audio,
+                                                   orig_freq=fs_hz,
+                                                   new_freq=self.fs_hz)
 
         if to_mono:
             audio = audio.sum(0)
 
         # trim from beginning for the selected duration
-        duration_n = int(duration_s * self.fs_hz)
+        if duration_n is not None:
+            if zero_pad:
+                sample_duration_n = audio.shape[-1]
+                padding_amount_n = max(duration_n - sample_duration_n, 0)
+                audio = torch.nn.functional.pad(audio, (0, padding_amount_n))
 
-        if zero_pad:
-            sample_duration_n = audio.shape[-1]
-            padding_amount_n = max(duration_n - sample_duration_n, 0)
-            audio = torch.nn.functional.pad(audio, (0, padding_amount_n))
+            audio = audio[:duration_n]
 
-        audio = audio[:duration_n]
-
-        toFloat = transforms.Lambda(lambda x: (x / np.iinfo(np.int16).max))
-        audio = toFloat(audio)
         return self.to_spectrogram(audio)
 
 
@@ -198,8 +200,7 @@ class MelSpectrogramsHelper(SpectrogramsHelper):
         self.num_mel_bins = num_mel_bins or self.num_freq_bins // mel_downscale
 
         # initialize the linear-to-mel conversion matrix
-        self._linear_to_mel_matrix = self.precompute_linear_to_mel().to(
-            self.device)
+        self._linear_to_mel_matrix = self.precompute_linear_to_mel()
 
     def precompute_linear_to_mel(self) -> torch.Tensor:
         linear_to_mel_np = spec_ops.linear_to_mel_weight_matrix(
@@ -222,7 +223,9 @@ class MelSpectrogramsHelper(SpectrogramsHelper):
         m_t = self.linear_to_mel_matrix.T
         p = torch.matmul(self.linear_to_mel_matrix, m_t)
         sums = torch.sum(p, dim=0)
-        d = torch.where(torch.abs(sums).gt(1.e-8), 1.0/sums, sums)
+        d = torch.where(torch.abs(sums).gt(1.e-8),
+                        torch.div(torch.ones_like(sums), sums),
+                        sums)
         return torch.matmul(m_t, torch.diag(d))
 
     def to_spectrogram(self, audio_tensor: torch.Tensor) -> torch.Tensor:
