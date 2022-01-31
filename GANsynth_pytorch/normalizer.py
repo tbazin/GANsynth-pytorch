@@ -1,6 +1,7 @@
 from typing import Optional, Union, Iterable
 import pathlib
 import json
+from typing_extensions import Final
 import numpy as np
 import torch
 from torch import nn
@@ -21,6 +22,14 @@ class DataNormalizerStatistics(object):
         self.p_b = p_b
 
 
+@torch.jit.interface
+class DataNormalizerInterface(nn.Module):
+    def normalize(self, spec_and_IF: torch.Tensor) -> torch.Tensor:
+        pass
+
+    def denormalize(self, spec_and_IF: torch.Tensor) -> torch.Tensor:
+        pass
+
 class DataNormalizer(nn.Module):
     def __init__(self, statistics: Optional[DataNormalizerStatistics] = None,
                  dataloader: Optional[DataLoader] = None):
@@ -39,13 +48,13 @@ class DataNormalizer(nn.Module):
         print("Statistics:", self.statistics.__dict__)
 
         # pre-compute torch tensors
-        a = np.asarray([self.statistics.s_a, self.statistics.p_a])[
+        a_numpy = np.asarray([self.statistics.s_a, self.statistics.p_a])[
             None, :, None, None]
-        b = np.asarray([self.statistics.s_b, self.statistics.p_b])[
+        b_numpy = np.asarray([self.statistics.s_b, self.statistics.p_b])[
             None, :, None, None]
-        self.a = nn.Parameter(torch.as_tensor(a).float(),
+        self.a = nn.Parameter(torch.as_tensor(a_numpy).float(),
                               requires_grad=False)
-        self.b = nn.Parameter(torch.as_tensor(b).float(),
+        self.b = nn.Parameter(torch.as_tensor(b_numpy).float(),
                               requires_grad=False)
 
     def _init_range_normalizer(self, dataloader: DataLoader,

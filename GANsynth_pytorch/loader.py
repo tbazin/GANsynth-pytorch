@@ -1,6 +1,6 @@
-import numpy as np
 from typing import Tuple, Callable, Any, Iterable
 import functools
+import math
 
 import torch
 from torch.utils.data import Dataset
@@ -71,7 +71,7 @@ def mask_phase(spectrogram: torch.Tensor, min_magnitude: float):
     logmag = spectrogram.select(channel_dim, 0)
     IF = spectrogram.select(channel_dim, 1)
 
-    log_threshold = np.log(2 * min_magnitude)
+    log_threshold = math.log(2 * min_magnitude)
     mask = logmag < log_threshold
 
     logmag.masked_fill_(mask, log_threshold)

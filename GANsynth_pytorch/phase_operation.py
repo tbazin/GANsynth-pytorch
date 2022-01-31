@@ -1,4 +1,4 @@
-import numpy as np
+import math
 import torch
 
 
@@ -19,7 +19,7 @@ def diff(x: torch.Tensor, dim: int) -> torch.Tensor:
     return x.narrow(dim, 1, length-1) - x.narrow(dim, 0, length-1)
 
 
-def unwrap(p: torch.Tensor, discont: float = np.pi, dim: int = -1
+def unwrap(p: torch.Tensor, discont: float = math.pi, dim: int = -1
            ) -> torch.Tensor:
     """Unwrap a cyclical phase tensor.
 
@@ -35,10 +35,10 @@ def unwrap(p: torch.Tensor, discont: float = np.pi, dim: int = -1
             Unwrapped tensor of same size as input.
     """
     dd = diff(p, dim=dim)
-    ddmod = torch.remainder(dd + np.pi, 2.0*np.pi) - np.pi
+    ddmod = torch.remainder(dd + math.pi, 2.0*math.pi) - math.pi
 
-    idx = torch.eq(ddmod, -np.pi) * torch.gt(dd, 0)
-    ddmod = torch.where(idx, torch.ones_like(ddmod) * np.pi, ddmod)
+    idx = torch.eq(ddmod, -math.pi) * torch.gt(dd, 0)
+    ddmod = torch.where(idx, torch.ones_like(ddmod) * math.pi, ddmod)
     ph_correct = ddmod - dd
 
     idx = torch.lt(torch.abs(dd), discont)
@@ -80,7 +80,7 @@ def instantaneous_frequency(phase_angle: torch.Tensor, time_axis: int
     dphase = torch.cat([initial_phase, dphase], dim=time_axis)
 
     # rescale to [-1, 1]
-    dphase = dphase / np.pi
+    dphase = dphase / math.pi
     return dphase
 
 

@@ -5,7 +5,6 @@ import torch
 from torch import nn
 import torchaudio
 from typing import Tuple, Optional
-from torchvision import transforms
 
 import GANsynth_pytorch.spec_ops as spec_ops
 import GANsynth_pytorch.phase_operation as phase_op
@@ -14,6 +13,19 @@ import GANsynth_pytorch.phase_operation as phase_op
 torchaudio.set_audio_backend('sox_io')
 
 # SPEC_THRESHOLD = 1e-6
+
+
+@torch.jit.interface
+class SpectrogramsHelperInterface(nn.Module):
+    def to_spectrogram(self, audio: torch.Tensor) -> torch.Tensor:
+        pass
+
+    def to_audio(self, spectrogram: torch.Tensor) -> torch.Tensor:
+        pass
+
+    def from_wavfile(self, audio_path: str, duration_n: Optional[int] = None,
+                     to_mono: bool = True, zero_pad: bool = True) -> torch.Tensor:
+        pass
 
 
 class SpectrogramsHelper(nn.Module):
@@ -118,11 +130,14 @@ class SpectrogramsHelper(nn.Module):
 
         logmagnitude = self._expand(logmagnitude)
         IF = self._expand(IF)
-        return self._merge_channels(logmagnitude, IF)
+        spectrogram = self._merge_channels(logmagnitude, IF)
+        return self.postprocess_spectrogram(spectrogram)
 
     def to_audio(self, spectrogram: torch.Tensor) -> torch.Tensor:
-        channel_dim: Optional[int]
+        channel_dim: Optional[int] = None
         batch_dim, channel_dim, freq_dim, time_dim = 0, 1, 2, 3
+
+        spectrogram = self.preprocess_spectrogram(spectrogram)
 
         # replicate the last frequency band
         # emulates the previously dropped Nyquist frequency, as advocated
@@ -148,7 +163,8 @@ class SpectrogramsHelper(nn.Module):
         audio = self._istft(stft)
         return audio
 
-    def from_wavfile(self, audio_path: pathlib.Path,
+    # @torch.jit.export
+    def from_wavfile(self, audio_path: str,
                      duration_n: Optional[int] = None,
                      to_mono: bool = True,
                      zero_pad: bool = True,
@@ -176,6 +192,12 @@ class SpectrogramsHelper(nn.Module):
             audio = audio[:duration_n]
 
         return self.to_spectrogram(audio)
+
+    def preprocess_spectrogram(self, spectrogram: torch.Tensor) -> torch.Tensor:
+        return spectrogram
+
+    def postprocess_spectrogram(self, spectrogram: torch.Tensor) -> torch.Tensor:
+        return spectrogram
 
 
 class MelSpectrogramsHelper(SpectrogramsHelper):
@@ -228,14 +250,11 @@ class MelSpectrogramsHelper(SpectrogramsHelper):
                         sums)
         return torch.matmul(m_t, torch.diag(d))
 
-    def to_spectrogram(self, audio_tensor: torch.Tensor) -> torch.Tensor:
-        spectrogram = super().to_spectrogram(audio_tensor)
-        return self._linear_to_mel(spectrogram)
+    def postprocess_spectrogram(self, linear_spectrogram: torch.Tensor) -> torch.Tensor:
+        return self._linear_to_mel(linear_spectrogram)
 
-    def to_audio(self, mel_spectrogram: torch.Tensor
-                 ) -> torch.Tensor:
-        spectrogram = self._mel_to_linear(mel_spectrogram)
-        return super().to_audio(spectrogram)
+    def preprocess_spectrogram(self, mel_spectrogram: torch.Tensor) -> torch.Tensor:
+        return self._mel_to_linear(mel_spectrogram)
 
     def _linear_to_mel(self, spectrogram: torch.Tensor) -> torch.Tensor:
         """Converts specgrams to melspecgrams.
@@ -248,7 +267,7 @@ class MelSpectrogramsHelper(SpectrogramsHelper):
             shape [batch, freq, time], mel scaling of frequencies.
         """
         # assumed initial dimensions
-        channel_dim: Optional[int]
+        channel_dim: Optional[int] = None
         batch_dim, channel_dim, freq_dim, time_dim = (0, 1, 2, 3)
 
         # transpose to [batch, time, freq] shape
@@ -292,7 +311,7 @@ class MelSpectrogramsHelper(SpectrogramsHelper):
         specgrams: Tensor of log magnitudes and instantaneous frequencies,
             shape [batch, freq, time].
         """
-        channel_dim: Optional[int]
+        channel_dim: Optional[int] = None
         batch_dim, channel_dim, freq_dim, time_dim = (0, 1, 2, 3)
 
         # transpose time and frequency dimensions for mel-conversion
