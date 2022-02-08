@@ -171,7 +171,7 @@ class SpectrogramsHelper(nn.Module):
                      ) -> torch.Tensor:
         """Load and convert a single audio file"""
         audio, fs_hz = torchaudio.load(audio_path, channels_first=True)
-        audio = audio.to(self.window.device)
+        audio = audio.to(self.device)
 
         # resample to target sampling frequency
         if not fs_hz == self.fs_hz:
@@ -222,7 +222,9 @@ class MelSpectrogramsHelper(SpectrogramsHelper):
         self.num_mel_bins = num_mel_bins or self.num_freq_bins // mel_downscale
 
         # initialize the linear-to-mel conversion matrix
-        self._linear_to_mel_matrix = self.precompute_linear_to_mel()
+        self._linear_to_mel_matrix = nn.Parameter(
+            self.precompute_linear_to_mel(),
+            requires_grad=False)
 
     def precompute_linear_to_mel(self) -> torch.Tensor:
         linear_to_mel_np = spec_ops.linear_to_mel_weight_matrix(
@@ -284,7 +286,7 @@ class MelSpectrogramsHelper(SpectrogramsHelper):
         phase_angle = torch.cumsum(IF * np.pi, dim=time_dim)
 
         linear_to_mel_matrix = (self.linear_to_mel_matrix
-                                .to(mag2.device).to(mag2.dtype))
+                                .to(dtype=mag2.dtype))
 
         logmelmag2 = torch.log(
             torch.matmul(mag2, linear_to_mel_matrix)
@@ -323,8 +325,7 @@ class MelSpectrogramsHelper(SpectrogramsHelper):
         freq_dim, time_dim = freq_dim-1, time_dim-1
 
         mel_to_linear_matrix = (self.mel_to_linear_matrix
-                                .to(logmelmag2.device)
-                                .to(logmelmag2.dtype))
+                                .to(dtype=logmelmag2.dtype))
 
         mag2 = torch.tensordot(torch.exp(logmelmag2) - self.safelog_eps,
                                mel_to_linear_matrix,

@@ -88,9 +88,11 @@ class DataNormalizer(nn.Module):
 
         self.statistics = DataNormalizerStatistics(s_a, s_b, p_a, p_b)
 
+    @torch.jit.export
     def normalize(self, spec_and_IF: torch.Tensor):
         return spec_and_IF * self.a + self.b
 
+    @torch.jit.export
     def denormalize(self, spec_and_IF: torch.Tensor):
         return (spec_and_IF - self.b) / self.a
 
