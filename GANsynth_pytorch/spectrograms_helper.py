@@ -27,19 +27,20 @@ class SpectrogramsHelperInterface(nn.Module):
                      to_mono: bool = True, zero_pad: bool = True) -> torch.Tensor:
         pass
 
-
 class SpectrogramsHelper(nn.Module):
     def __init__(self, fs_hz: int = 16000,
                  n_fft: int = 2048,
                  hop_length: int = 512,
                  window_length: Optional[int] = None,
-                 safelog_eps: float = 1e-6
+                 safelog_eps: float = 1e-6,
+                 oversample_decoder_factor: int = 1
                  ):
         super().__init__()
         self.fs_hz = fs_hz
         self.n_fft = n_fft
         self.hop_length = hop_length
         self.window_length = window_length or self.n_fft
+        self.oversample_decoder_factor = oversample_decoder_factor
 
         self.window = nn.Parameter(
             torch.hann_window(self.window_length, periodic=False),
@@ -95,8 +96,8 @@ class SpectrogramsHelper(nn.Module):
             sampler, torch.Tensor, shape [batch, duration]:
                 a batch of audio samples
         Return:
-            torch.Tensor, shape [batch, self.n_fft//2 + 1, num_windows, 2]:
-                the magnitude and Instantaneous Frequency of the input
+            torch.ComplexTensor, shape [batch, self.n_fft//2 + 1, num_windows]:
+                the complex STFT of the signal
         """
         return torch.stft(sample, n_fft=self.n_fft, hop_length=self.hop_length,
                           window=self.window, win_length=self.window_length,
@@ -108,59 +109,26 @@ class SpectrogramsHelper(nn.Module):
         Argument and output are the converse of self._stft()
         """
         return torch.istft(
-            stft, n_fft=self.n_fft, hop_length=self.hop_length,
+            stft, n_fft=self.n_fft,
+            hop_length=self.hop_length // self.oversample_decoder_factor,
             window=self.window, win_length=self.window_length,
             return_complex=False)
 
     def to_spectrogram(self, audio: torch.Tensor) -> torch.Tensor:
         if audio.ndim == 1:
+            # insert batch dimension
             audio = audio.unsqueeze(0)
 
         # shape [batch, self.n_fft//2 + 1, num_windows, 2]
-        spec = self._stft(audio)
-
-        # trim-off Nyquist frequency as advocated by GANSynth
-        spec = spec[:, :-1]
-
-        magnitude, angle = spec.abs(), spec.angle()
-
-        logmagnitude = torch.log(magnitude + self.safelog_eps)
-
-        IF = phase_op.instantaneous_frequency(angle, time_axis=2)
-
-        logmagnitude = self._expand(logmagnitude)
-        IF = self._expand(IF)
-        spectrogram = self._merge_channels(logmagnitude, IF)
-        return self.postprocess_spectrogram(spectrogram)
+        spectrogram = self._stft(audio)
+        return self._transform_after_stft(spectrogram)
 
     def to_audio(self, spectrogram: torch.Tensor) -> torch.Tensor:
         channel_dim: Optional[int] = None
         batch_dim, channel_dim, freq_dim, time_dim = 0, 1, 2, 3
 
-        spectrogram = self.preprocess_spectrogram(spectrogram)
-
-        # replicate the last frequency band
-        # emulates the previously dropped Nyquist frequency, as advocated
-        # by GANSynth
-        spectrogram = torch.cat([spectrogram,
-                                 spectrogram.select(
-                                     dim=freq_dim, index=-1
-                                     ).unsqueeze(freq_dim)
-                                 ],
-                                dim=freq_dim)
-
-        logmag, IF = self._split_channels(spectrogram)
-        channel_dim = None
-        freq_dim, time_dim = freq_dim - 1, time_dim - 1
-
-        mag = torch.exp(logmag) - self.safelog_eps
-        reconstructed_magnitude = torch.abs(mag)
-
-        reconstructed_phase_angle = torch.cumsum(IF * np.pi, dim=time_dim)
-
-        stft = phase_op.polar2rect(reconstructed_magnitude,
-                                   reconstructed_phase_angle)
-        audio = self._istft(stft)
+        spectrogram = self._prepare_for_istft(spectrogram)
+        audio = self._istft(spectrogram)
         return audio
 
     # @torch.jit.export
@@ -193,15 +161,80 @@ class SpectrogramsHelper(nn.Module):
 
         return self.to_spectrogram(audio)
 
-    def preprocess_spectrogram(self, spectrogram: torch.Tensor) -> torch.Tensor:
+    def _prepare_for_istft(self, spectrogram: torch.Tensor) -> torch.Tensor:
+        # replicate the last frequency band
+        # emulates the previously dropped Nyquist frequency, as advocated
+        # by GANSynth
+        spectrogram = torch.cat([spectrogram,
+                                 spectrogram.select(
+                                     dim=-2, index=-1
+                                     ).unsqueeze(-2)
+                                 ],
+                                dim=-2)
         return spectrogram
 
-    def postprocess_spectrogram(self, spectrogram: torch.Tensor) -> torch.Tensor:
+    def _transform_after_stft(self, spectrogram: torch.Tensor) -> torch.Tensor:
+        # trim-off Nyquist frequency as advocated by GANSynth
+        spectrogram = spectrogram[:, :-1]
+        # expand to evenly-divisible number of steps
+        spectrogram = self._expand(spectrogram)
         return spectrogram
 
 
-class MelSpectrogramsHelper(SpectrogramsHelper):
-    def __init__(self, lower_edge_hertz: float = 0.0,
+class SpectrogramsHelperWithRealView(SpectrogramsHelper):
+    def _to_real(self, spectrogram: torch.Tensor) -> torch.Tensor:
+        spectrogram = torch.view_as_real(spectrogram)
+        spectrogram = spectrogram.permute(0, 3, 1, 2)
+        return spectrogram
+
+    def _transform_after_stft(self, spectrogram: torch.Tensor) -> torch.Tensor:
+        return self.to_real(super()._transform_after_stft(spectrogram))
+
+    def _to_complex(self, spectrogram: torch.Tensor) -> torch.Tensor:
+        spectrogram = spectrogram.permute(0, 2, 3, 1).contiguous()
+        spectrogram = torch.view_as_complex(spectrogram)
+        return spectrogram
+
+    def _transform_after_stft(self, spectrogram: torch.Tensor) -> torch.Tensor:
+        return self._to_real(super()._transform_after_stft(spectrogram))
+
+    def _prepare_for_istft(self, spectrogram: torch.Tensor) -> torch.Tensor:
+        return super()._prepare_for_istft(self._to_complex(spectrogram))
+
+class PowerSpectrogramsHelper(SpectrogramsHelper):
+    def _transform_after_stft(self, spectrogram: torch.Tensor) -> torch.Tensor:
+        spectrogram = super()._transform_after_stft(spectrogram)
+        magnitude, angle = spectrogram.abs(), spectrogram.angle()
+
+        logmagnitude = torch.log(magnitude + self.safelog_eps)
+
+        IF = phase_op.instantaneous_frequency(angle, time_axis=2)
+        spectrogram = self._merge_channels(logmagnitude, IF)
+        return spectrogram
+
+    def _prepare_for_istft(self, spectrogram: torch.Tensor) -> torch.Tensor:
+        channel_dim: Optional[int] = None
+        batch_dim, channel_dim, freq_dim, time_dim = 0, 1, 2, 3
+
+        spectrogram = super()._prepare_for_istft(spectrogram)
+
+        logmag, IF = self._split_channels(spectrogram)
+        channel_dim = None
+        freq_dim, time_dim = freq_dim - 1, time_dim - 1
+
+        mag = torch.exp(logmag) - self.safelog_eps
+        reconstructed_magnitude = torch.abs(mag)
+
+        reconstructed_phase_angle = torch.cumsum(IF * np.pi, dim=time_dim)
+
+        stft = phase_op.polar2rect(reconstructed_magnitude,
+                                   reconstructed_phase_angle)
+        return stft
+
+
+class MelScaleHelper(nn.Module):
+    def __init__(self, n_fft: int, fs_hz: int,
+                 lower_edge_hertz: float = 0.0,
                  upper_edge_hertz: float = 16000 / 2.0,
                  mel_break_frequency_hertz: float = (
                      spec_ops._MEL_BREAK_FREQUENCY_HERTZ),
@@ -209,9 +242,11 @@ class MelSpectrogramsHelper(SpectrogramsHelper):
                  mel_bin_width_threshold_factor: float = 1.5,
                  num_freq_bins: Optional[int] = None,
                  num_mel_bins: Optional[int] = None,
-                 **kwargs,
                  ):
-        super().__init__(**kwargs)
+        super().__init__()
+
+        self.n_fft = n_fft
+        self.fs_hz = fs_hz
 
         self.mel_lower_edge_hertz = lower_edge_hertz
         self.mel_upper_edge_hertz = upper_edge_hertz
@@ -252,11 +287,68 @@ class MelSpectrogramsHelper(SpectrogramsHelper):
                         sums)
         return torch.matmul(m_t, torch.diag(d))
 
-    def postprocess_spectrogram(self, linear_spectrogram: torch.Tensor) -> torch.Tensor:
-        return self._linear_to_mel(linear_spectrogram)
 
-    def preprocess_spectrogram(self, mel_spectrogram: torch.Tensor) -> torch.Tensor:
-        return self._mel_to_linear(mel_spectrogram)
+class MelSpectrogramsHelper(SpectrogramsHelperWithRealView):
+    def __init__(self, mel_scale_helper: MelScaleHelper,
+                 fs_hz: int = 16000, n_fft: int = 2048, hop_length: int = 512,
+                 window_length: Optional[int] = None, safelog_eps: float = 0.000001):
+        super().__init__(fs_hz, n_fft, hop_length, window_length, safelog_eps)
+        self.mel_scale_helper = mel_scale_helper
+
+    def _transform_after_stft(self, linear_spectrogram: torch.Tensor) -> torch.Tensor:
+        return self._linear_to_mel(super()._transform_after_stft(linear_spectrogram))
+
+    def _prepare_for_istft(self, mel_spectrogram: torch.Tensor) -> torch.Tensor:
+        return super()._prepare_for_istft(self._mel_to_linear(mel_spectrogram))
+
+    def _linear_to_mel(self, spectrogram: torch.Tensor) -> torch.Tensor:
+        """Converts specgrams to melspecgrams.
+
+        Args:
+        specgrams: Tensor of log magnitudes and instantaneous frequencies,
+            shape [batch, freq, time].
+        Returns:
+        melspecgrams: Tensor of log magnitudes and instantaneous frequencies,
+            shape [batch, freq, time], mel scaling of frequencies.
+        """
+        linear_to_mel_matrix = (self.mel_scale_helper.linear_to_mel_matrix
+                                .to(dtype=spectrogram.dtype))
+        mel_spectrogram = torch.matmul(spectrogram.transpose(-1, -2),
+                                       linear_to_mel_matrix
+                                       ).transpose(-1, -2)
+
+        return mel_spectrogram
+
+    def _mel_to_linear(self, mel_spectrogram: torch.Tensor) -> torch.Tensor:
+        """Converts melspecgrams to specgrams.
+        Args:
+        melspecgrams: Tensor of log magnitudes and instantaneous frequencies,
+            shape [batch, freq, time], mel scaling of frequencies.
+        Returns:
+        specgrams: Tensor of log magnitudes and instantaneous frequencies,
+            shape [batch, freq, time].
+        """
+        mel_to_linear_matrix = (self.mel_scale_helper.mel_to_linear_matrix
+                                .to(dtype=mel_spectrogram.dtype))
+        spectrogram = torch.matmul(mel_spectrogram.transpose(-1, -2),
+                                       mel_to_linear_matrix
+                                       ).transpose(-1, -2)
+
+        return spectrogram
+
+
+class MelPowerSpectrogramsHelper(PowerSpectrogramsHelper):
+    def __init__(self, mel_scale_helper: MelScaleHelper,
+                 fs_hz: int = 16000, n_fft: int = 2048, hop_length: int = 512,
+                 window_length: Optional[int] = None, safelog_eps: float = 0.000001):
+        super().__init__(fs_hz, n_fft, hop_length, window_length, safelog_eps)
+        self.mel_scale_helper = mel_scale_helper
+
+    def _transform_after_stft(self, linear_spectrogram: torch.Tensor) -> torch.Tensor:
+        return self._linear_to_mel(super()._transform_after_stft(linear_spectrogram))
+
+    def _prepare_for_istft(self, mel_spectrogram: torch.Tensor) -> torch.Tensor:
+        return super()._prepare_for_istft(self._mel_to_linear(mel_spectrogram))
 
     def _linear_to_mel(self, spectrogram: torch.Tensor) -> torch.Tensor:
         """Converts specgrams to melspecgrams.
@@ -285,7 +377,7 @@ class MelSpectrogramsHelper(SpectrogramsHelper):
         # retrieve the phase angle for conversion, unroll IF
         phase_angle = torch.cumsum(IF * np.pi, dim=time_dim)
 
-        linear_to_mel_matrix = (self.linear_to_mel_matrix
+        linear_to_mel_matrix = (self.mel_scale_helper.linear_to_mel_matrix
                                 .to(dtype=mag2.dtype))
 
         logmelmag2 = torch.log(
@@ -324,7 +416,7 @@ class MelSpectrogramsHelper(SpectrogramsHelper):
         channel_dim = None
         freq_dim, time_dim = freq_dim-1, time_dim-1
 
-        mel_to_linear_matrix = (self.mel_to_linear_matrix
+        mel_to_linear_matrix = (self.mel_scale_helper.mel_to_linear_matrix
                                 .to(dtype=logmelmag2.dtype))
 
         mag2 = torch.tensordot(torch.exp(logmelmag2) - self.safelog_eps,
