@@ -187,9 +187,6 @@ class SpectrogramsHelperWithRealView(SpectrogramsHelper):
         spectrogram = spectrogram.permute(0, 3, 1, 2)
         return spectrogram
 
-    def _transform_after_stft(self, spectrogram: torch.Tensor) -> torch.Tensor:
-        return self.to_real(super()._transform_after_stft(spectrogram))
-
     def _to_complex(self, spectrogram: torch.Tensor) -> torch.Tensor:
         spectrogram = spectrogram.permute(0, 2, 3, 1).contiguous()
         spectrogram = torch.view_as_complex(spectrogram)
