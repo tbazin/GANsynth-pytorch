@@ -1,3 +1,6 @@
+# As of PyTorch 1.12, TorchScript does not support inheritance
+# (tracked in https://github.com/pytorch/pytorch/issues/42885)
+# This rewrite ensures that no calls to super() methods occur
 
 import numpy as np
 import pathlib
@@ -195,14 +198,32 @@ class SpectrogramsHelperWithRealView(SpectrogramsHelper):
         return spectrogram
 
     def _transform_after_stft(self, spectrogram: torch.Tensor) -> torch.Tensor:
-        return self._to_real(super()._transform_after_stft(spectrogram))
+        # trim-off Nyquist frequency as advocated by GANSynth
+        spectrogram = spectrogram[:, :-1]
+        # expand to evenly-divisible number of steps
+        spectrogram = self._expand(spectrogram)
+        return self._to_real(spectrogram)
 
     def _prepare_for_istft(self, spectrogram: torch.Tensor) -> torch.Tensor:
-        return super()._prepare_for_istft(self._to_complex(spectrogram))
+        spectrogram = self._to_complex(spectrogram)
+        # replicate the last frequency band
+        # emulates the previously dropped Nyquist frequency, as advocated
+        # by GANSynth
+        spectrogram = torch.cat([spectrogram,
+                                 spectrogram.select(
+                                     dim=-2, index=-1
+                                     ).unsqueeze(-2)
+                                 ],
+                                dim=-2)
+        return spectrogram
+
 
 class PowerSpectrogramsHelper(SpectrogramsHelper):
     def _transform_after_stft(self, spectrogram: torch.Tensor) -> torch.Tensor:
-        spectrogram = super()._transform_after_stft(spectrogram)
+        # trim-off Nyquist frequency as advocated by GANSynth
+        spectrogram = spectrogram[:, :-1]
+        # expand to evenly-divisible number of steps
+        spectrogram = self._expand(spectrogram)
         magnitude, angle = spectrogram.abs(), spectrogram.angle()
 
         logmagnitude = torch.log(magnitude + self.safelog_eps)
@@ -215,7 +236,15 @@ class PowerSpectrogramsHelper(SpectrogramsHelper):
         channel_dim: Optional[int] = None
         batch_dim, channel_dim, freq_dim, time_dim = 0, 1, 2, 3
 
-        spectrogram = super()._prepare_for_istft(spectrogram)
+        # replicate the last frequency band
+        # emulates the previously dropped Nyquist frequency, as advocated
+        # by GANSynth
+        spectrogram = torch.cat([spectrogram,
+                                 spectrogram.select(
+                                     dim=-2, index=-1
+                                     ).unsqueeze(-2)
+                                 ],
+                                dim=-2)
 
         logmag, IF = self._split_channels(spectrogram)
         channel_dim = None
@@ -313,10 +342,26 @@ class MelSpectrogramsHelper(SpectrogramsHelperWithRealView):
         self.mel_scale_helper = mel_scale_helper
 
     def _transform_after_stft(self, linear_spectrogram: torch.Tensor) -> torch.Tensor:
-        return self._linear_to_mel(super()._transform_after_stft(linear_spectrogram))
+        # trim-off Nyquist frequency as advocated by GANSynth
+        linear_spectrogram = linear_spectrogram[:, :-1]
+        # expand to evenly-divisible number of steps
+        linear_spectrogram = self._expand(linear_spectrogram)
+        linear_spectrogram = self._to_real(linear_spectrogram)
+        return self._linear_to_mel(linear_spectrogram)
 
     def _prepare_for_istft(self, mel_spectrogram: torch.Tensor) -> torch.Tensor:
-        return super()._prepare_for_istft(self._mel_to_linear(mel_spectrogram))
+        linear_spectrogram = self._mel_to_linear(mel_spectrogram)
+        linear_spectrogram = self._to_complex(linear_spectrogram)
+        # replicate the last frequency band
+        # emulates the previously dropped Nyquist frequency, as advocated
+        # by GANSynth
+        linear_spectrogram = torch.cat([linear_spectrogram,
+                                 linear_spectrogram.select(
+                                     dim=-2, index=-1
+                                     ).unsqueeze(-2)
+                                 ],
+                                dim=-2)
+        return linear_spectrogram
 
     def _linear_to_mel(self, spectrogram: torch.Tensor) -> torch.Tensor:
         """Converts specgrams to melspecgrams.
@@ -364,10 +409,47 @@ class MelPowerSpectrogramsHelper(PowerSpectrogramsHelper):
         self.mel_scale_helper = mel_scale_helper
 
     def _transform_after_stft(self, linear_spectrogram: torch.Tensor) -> torch.Tensor:
-        return self._linear_to_mel(super()._transform_after_stft(linear_spectrogram))
+        # trim-off Nyquist frequency as advocated by GANSynth
+        linear_spectrogram = linear_spectrogram[:, :-1]
+        # expand to evenly-divisible number of steps
+        linear_spectrogram = self._expand(linear_spectrogram)
+        magnitude, angle = linear_spectrogram.abs(), linear_spectrogram.angle()
+
+        logmagnitude = torch.log(magnitude + self.safelog_eps)
+
+        IF = phase_op.instantaneous_frequency(angle, time_axis=2)
+        linear_spectrogram = self._merge_channels(logmagnitude, IF)
+        return self._linear_to_mel(linear_spectrogram)
 
     def _prepare_for_istft(self, mel_spectrogram: torch.Tensor) -> torch.Tensor:
-        return super()._prepare_for_istft(self._mel_to_linear(mel_spectrogram))
+        linear_spectrogram = self._mel_to_linear(mel_spectrogram)
+
+        channel_dim: Optional[int] = None
+        batch_dim, channel_dim, freq_dim, time_dim = 0, 1, 2, 3
+
+        # replicate the last frequency band
+        # emulates the previously dropped Nyquist frequency, as advocated
+        # by GANSynth
+        linear_spectrogram = torch.cat([
+            linear_spectrogram,
+            linear_spectrogram.select(
+                dim=-2, index=-1
+                ).unsqueeze(-2)
+            ],
+                                       dim=-2)
+
+        logmag, IF = self._split_channels(linear_spectrogram)
+        channel_dim = None
+        freq_dim, time_dim = freq_dim - 1, time_dim - 1
+
+        mag = torch.exp(logmag) - self.safelog_eps
+        reconstructed_magnitude = torch.abs(mag)
+
+        reconstructed_phase_angle = torch.cumsum(IF * np.pi, dim=time_dim)
+
+        stft = phase_op.polar2rect(reconstructed_magnitude,
+                                   reconstructed_phase_angle)
+        return stft
 
     def _linear_to_mel(self, spectrogram: torch.Tensor) -> torch.Tensor:
         """Converts specgrams to melspecgrams.
